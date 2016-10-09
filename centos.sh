@@ -16,7 +16,8 @@ USAGE="
  	This script is used for install server componect.
 
  OPTIONS
- 	--install Install server componect,include:mysql,http,svn,vpn,ftp,tomcat
+ 	--install    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat
+ 	--host-name  Domain name for the host.
 ";
 
 
@@ -89,7 +90,10 @@ fi
 action='';
 options='';
 
-ARGS=`getopt -o i -u -al install:,stop:,start: -- "$@"`
+# 域名
+host_name=""
+
+ARGS=`getopt -o i -u -al install:,stop:,start:,host-name: -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -111,6 +115,9 @@ do
 			action=${action:2};			
 			shift;;
 
+		--host-name)
+			host-name=$2;
+			shift 2;;			
 		--)
 			break;;
 
@@ -142,6 +149,16 @@ function option_test()
 }
 
 
+# 如果未传入host-name参数
+clear;
+
+if [[ -z "$host_name" ]]; then;
+	printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"	
+	read tmp;
+	host_name="$tmp";
+fi
+
+
 ############################# Define variables #############################
 
 # Mysql
@@ -169,7 +186,7 @@ ftp_password='guoliang.xie';
 
 # HTTP
 o_http_state=$(option_test "http");
-host_name="us.1ms.im"
+
 
 # SVN
 if [[ ! -f "sha1.jar" ]]; then
@@ -723,57 +740,65 @@ function install_httpd()
 
 		echo "Install HTTP server..."
 
-		yum -y install httpd httpd-devel php php-mysql php-gd php-ldap php-odbc php-pear php-xml php-xmlrpc php-mbstring php-snmp php-soap curl curl-devel php-mcrypt phpmyadmin
+		yum -y install httpd httpd-devel php php-mysql php-gd php-ldap php-odbc php-pear php-xml php-xmlrpc php-mbstring php-snmp php-soap curl curl-devel php-mcrypt phpmyadmin;
 
-		mkdir -p /var/www/$host_name;
+		site_dir="/var/www/html";
+		
+		if [[ -n "$host_name" ]]; then
+			site_dir="/var/www/$host_name"
 
-		mkdir -p /var/www/$host_name/downloads;
+			# 配置虚拟主机
+			mkdir -p /etc/httpd/vhost-conf.d
 
-		# 配置虚拟主机
-		mkdir -p /etc/httpd/vhost-conf.d
+			sed -i "/Include vhost-conf.d\/*.conf/d" /etc/httpd/conf/httpd.conf
+			sed -i "$ a Include vhost-conf.d\/*.conf" /etc/httpd/conf/httpd.conf
 
-		sed -i "/Include vhost-conf.d\/*.conf/d" /etc/httpd/conf/httpd.conf
-		sed -i "$ a Include vhost-conf.d\/*.conf" /etc/httpd/conf/httpd.conf
+			rm -rf /etc/httpd/vhost-conf.d/$host_name.conf
 
-		rm -rf /etc/httpd/vhost-conf.d/$host_name.conf
-
-		cat >>/etc/httpd/vhost-conf.d/$host_name.conf<<EOF
+			cat >>/etc/httpd/vhost-conf.d/$host_name.conf<<EOF
 NameVirtualHost *:80
 
 <VirtualHost *:80>  
    ServerName $host_name  
    ServerAlias $host_name
-   DocumentRoot /var/www/$host_name  
+   DocumentRoot $site_dir  
    DirectoryIndex index.html index.php  
 </VirtualHost>  
-<Directory "/var/www/$host_name">  
+<Directory "$site_dir">  
    Options +Includes -Indexes  
    AllowOverride All  
    Order Deny,Allow  
    Allow from All  
 </Directory>
 
-<Directory "/var/www/$host_name/downloads">  
+<Directory "$site_dir/downloads">  
    Options Indexes FollowSymLinks
    AllowOverride All  
    Order Deny,Allow  
    Allow from All  
 </Directory>
 EOF
+		fi
+
+		mkdir -p $site_dir;
+		mkdir -p site_dir/downloads;
+		
 
 		# 配置phpMyAdmin
 		sed -i "s/Require ip 127.0.0.1/Require all granted/g" /etc/httpd/conf.d/phpMyAdmin.conf;
 		sed -i "/Require ip ::1/d" /etc/httpd/conf.d/phpMyAdmin.conf;
 
-		rm -rf /var/www/$host_name/index.php
 
-		cat >>/var/www/$host_name/index.php<<EOF
+
+		rm -rf $site_dir/index.php
+
+		cat >>$site_dir/index.php<<EOF
 <?php
 	echo phpinfo();
 ?>
 EOF
 
-		echo "test" > /var/www/$host_name/downloads/test.txt;
+		echo "test" > $site_dir/downloads/test.txt;
 
 
 		# 添加防火墙
@@ -781,8 +806,10 @@ EOF
 		firewall-cmd --permanent --zone=public --add-service=https
 		firewall-cmd --reload
 
-		semanage fcontext -a -t public_content_rw_t "/var/www/$host_name(/.*)?"
-		restorecon -R -v /var/www/$host_name
+		if [[ -n "$host_name" ]]; then
+			semanage fcontext -a -t public_content_rw_t "/var/www/$host_name(/.*)?"
+			restorecon -R -v /var/www/$host_name
+		fi
 
 
 		# 启动服务
@@ -888,8 +915,12 @@ function install_tomcat()
 
 		# 下载解压文件
 		wget -N http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.5/bin/apache-tomcat-8.5.5.tar.gz;
+		rm -rf /var/local/apache-tomcat-8.5.5;
+		rm -rf /var/local/tomcat;
+
 		tar xzvf ./apache-tomcat-8.5.5.tar.gz -C /var/local;
 		ln -s /var/local/apache-tomcat-8.5.5 /var/local/tomcat;
+
 		rm -rf ./apache-tomcat-8.5.5.tar.gz;
 
 		# 添加防火墙
@@ -910,11 +941,11 @@ function install_tomcat()
 		source /etc/profile;
 
 		# 增加服务配置
-		groupadd tomcat;
-		useradd -M -s /bin/nologin -g tomcat -d $TOMCAT_HOME tomcat
-		chown -R tomcat:tomcat $TOMCAT_HOME
+		getent group tomcat || groupadd -r tomcat;
+		getent passwd tomcat || useradd -r -d $TOMCAT_HOME -s /bin/nologin -g tomcat tomcat;
+		chown -R tomcat:tomcat $TOMCAT_HOME;
+		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.5;
 
-		rm -rf ;
 
 		cat >>$TOMCAT_HOME/bin/setenv.sh<<EOF
 #add tomcat pid
@@ -927,21 +958,24 @@ EOF
 		rm -rf /lib/systemd/system/tomcat.service;
 		cat >>/lib/systemd/system/tomcat.service<<EOF
 [Unit]
-Description=Apache Tomcat
+Description=Apache Tomcat 8
 After=syslog.target network.target
 
 [Service]
 Type=forking
 PIDFile=$TOMCAT_HOME/tomcat.pid
+
 Environment=JAVA_HOME=$JAVA_HOME
 Environment=CATALINA_PID=$TOMCAT_HOME/tomcat.pid
 Environment=CATALINA_HOME=$TOMCAT_HOME
 Environment=CATALINA_BASE=$TOMCAT_HOME
+Environment='CATALINA_OPTS=-Xms512M -Xmx1024M -server -XX:+UseParallelGC'
+Environment='JAVA_OPTS=-Djava.awt.headless=true -Djava.security.egd=file:/dev/./urandom'
 
-WorkingDirectory=$TOMCAT_HOME
-
-ExecStart=$TOMCAT_HOME/bin/startup.sh
-ExecStop=$TOMCAT_HOME/bin/shutdown.sh
+ExecStart=$TOMCAT_HOME/bin/startup.sh 
+ExecReload=/bin/kill -s HUP $MAINPID
+ExecStop=/bin/kill -s QUIT $MAINPID
+PrivateTmp=true
 
 User=tomcat
 Group=tomcat
@@ -951,6 +985,7 @@ WantedBy=multi-user.target
 EOF
 	
 		# 启动服务
+		systemctl daemon-reload;
 		systemctl enable tomcat.service;
 		systemctl start tomcat.service;
 
