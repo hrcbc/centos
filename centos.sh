@@ -152,7 +152,7 @@ function option_test()
 # 如果未传入host-name参数
 clear;
 
-if [[ -z "$host_name" ]]; then;
+if [[ -z "$host_name" ]]; then
 	printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"	
 	read tmp;
 	host_name="$tmp";
@@ -743,7 +743,7 @@ function install_httpd()
 		yum -y install httpd httpd-devel php php-mysql php-gd php-ldap php-odbc php-pear php-xml php-xmlrpc php-mbstring php-snmp php-soap curl curl-devel php-mcrypt phpmyadmin;
 
 		site_dir="/var/www/html";
-		
+
 		if [[ -n "$host_name" ]]; then
 			site_dir="/var/www/$host_name"
 
@@ -945,6 +945,7 @@ function install_tomcat()
 		getent passwd tomcat || useradd -r -d $TOMCAT_HOME -s /bin/nologin -g tomcat tomcat;
 		chown -R tomcat:tomcat $TOMCAT_HOME;
 		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.5;
+		chmod -R ug+rwx /var/local/apache-tomcat-8.5.5;
 
 
 		cat >>$TOMCAT_HOME/bin/setenv.sh<<EOF
@@ -983,7 +984,64 @@ Group=tomcat
 [Install]
 WantedBy=multi-user.target
 EOF
-	
+		
+		site_home="/var/sites/tomcat/default";
+
+		# 修改配置文件
+		if [[ -n "$host_name" ]]; then
+			site_home="/var/sites/tomcat/$host_name";
+
+			tmpfile="/tmp/$RANDOM";
+			cat >>$tmpfile<<EOF
+      <Host name="$host_name" debug="0" appBase="$site_home" unpackWARs="true" autoDeploy="true">
+      	<Alias>$host_name</Alias>
+      	<Context path="/" docBase="$site_home"></Context>
+      </Host>
+EOF
+
+			sed -i '/<Engine name="Catalina" defaultHost="localhost">/r $tmpfile' $TOMCAT_HOME/conf/server.xml;
+			rm -rf $tmpfile;
+		else
+			sed -i "/[[:space:]]*unpackWARs=\"true\" autoDeploy=\"true\">/a \        <Context path=\"/\" docBase=\"$site_home\"></Context>" $TOMCAT_HOME/conf/server.xml;
+		fi
+
+
+		if [[ ! -d "$site_home" ]]; then
+			mkdir -p $site_home;
+		fi
+
+		# 生产Hello world
+
+		rm -rf $site_home/index.jsp;
+
+		cat >>$site_home/index.jsp<<EOF
+<%@ page language="java" import="java.util.*" pageEncoding="UTF-8"%>
+<%
+String path = request.getContextPath();
+String basePath = request.getScheme()+"://"+request.getServerName()+":"+request.getServerPort()+path+"/";
+%>
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Hello World</title>
+</head>
+
+<body>
+	<%
+    	out.println("Hello world!");
+    %>
+</body>
+</html>
+EOF
+		
+		chown -R tomcat:tomcat $site_home;
+		chmod -R ug+rw $site_home/*;
+
+		semanage fcontext -a -t public_content_rw_t "$site_home(/.*)?"
+		restorecon -R -v $site_home;
+
+
 		# 启动服务
 		systemctl daemon-reload;
 		systemctl enable tomcat.service;
