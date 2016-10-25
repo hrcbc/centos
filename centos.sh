@@ -16,10 +16,14 @@ USAGE="
  	This script is used for install server componect.
 
  OPTIONS
- 	--install    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat
- 	--host-name  Domain name for the host.
+ 	--install    		    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat,oracle,cobbler
+ 	--host-name  		    Domain name for the host.
+ 	--http-proxy-tomcat     When the value is 1, set the HTTP reverse proxy to Tomcat,default 1
+ 	--oracle-password   	Specify the super user‘s password
 ";
 
+
+cur_path=$("pwd");
 
 # 服务检测
 function service_test()
@@ -48,13 +52,16 @@ yum update -y;
 
 yum install -y epel-release;
 
-yum install -y gcc-c++ openssl-devel wget unzip expect;
+yum install -y gcc-c++ openssl-devel wget zip unzip expect;
 
 
 # 配置Java环境
 
 if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java version \"1.8" | wc -l) -eq 0 ]]; then
-	 wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
+	 #wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
+	 #if [[ ! -f "jdk-8u102-linux-x64.tar.gz" ]]; then
+	 #	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u102-linux-x64.tar.gz
+	 #fi
 
 	 # wget --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.rpm
 
@@ -67,19 +74,24 @@ if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java 
 	# curl can be used in place of wget.
 
 
-	tar xzvf ./jdk-8u102-linux-x64.tar.gz -C /var/local;
+	#tar xzvf ./jdk-8u102-linux-x64.tar.gz -C /var/local;
 
-	ln -s /var/local/jdk1.8.0_102 /var/local/jdk;
+	#ln -s /var/local/jdk1.8.0_102 /var/local/jdk;
 
-	rm -rf ./jdk-8u102-linux-x64.tar.gz;
+	#rm -rf ./jdk-8u102-linux-x64.tar.gz;
 
-	export JAVA_HOME=/var/local/jdk;
+	yum -y install java-1.8.0-openjdk*
+
+	export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk;
+	export JRE_HOME=$JAVA_HOME/jre;
 	export CLASS_PATH=.:$JAVA_HOME/lib;
 	export PATH=$PATH:$JAVA_HOME/bin;
-	sed -i '/export JAVA_HOME=\/var\/local\/jdk/d' /etc/profile
-	sed -i '/export CLASS_PATH=\.\:\$JAVA_HOME\/lib/d' /etc/profile
+	sed -i '/export JAVA_HOME=.*/d' /etc/profile
+	sed -i '/export CLASS_PATH=.*/d' /etc/profile
+	sed -i '/export JRE_HOME=.*/d' /etc/profile
 	sed -i '/export PATH=\$PATH:\$JAVA_HOME\/bin/d' /etc/profile
-	sed -i '$ a export JAVA_HOME=\/var\/local\/jdk' /etc/profile
+	sed -i '$ a export JAVA_HOME=\/usr\/lib\/jvm\/java-1.8.0-openjdk' /etc/profile
+	sed -i '$ a export JRE_HOME=\$JAVA_HOME\/jre' /etc/profile
 	sed -i '$ a export CLASS_PATH=\.\:\$JAVA_HOME\/lib' /etc/profile
 	sed -i '$ a export PATH=\$PATH:\$JAVA_HOME\/bin' /etc/profile
 	source /etc/profile;
@@ -93,7 +105,13 @@ options='';
 # 域名
 host_name=""
 
-ARGS=`getopt -o i -u -al install:,stop:,start:,host-name: -- "$@"`
+# Tomcat
+http_proxy_tomcat=1
+
+# Oracle
+oracle_password="";
+
+ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid: -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -117,15 +135,30 @@ do
 
 		--host-name)
 			host-name=$2;
-			shift 2;;			
+			shift 2;;	
+
+		--http-proxy-tomcat)
+			http_proxy_tomcat=$2;
+			shift 2;;		
+
+		--oracle-password)
+			oracle_password=$2;
+			shift 2;;
+
+		--oracle-sid)
+			oracle-sid=$2;
+			shift 2;;
+
 		--)
 			break;;
 
 		*)
+			#echo "$1 is not option";
 			echo $USAGE;
 			break;;
 	esac
 done
+
 
 if [ -n $options ]; then
         options=${options/+/|+};
@@ -149,14 +182,6 @@ function option_test()
 }
 
 
-# 如果未传入host-name参数
-clear;
-
-if [[ -z "$host_name" ]]; then
-	printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"	
-	read tmp;
-	host_name="$tmp";
-fi
 
 
 ############################# Define variables #############################
@@ -185,22 +210,51 @@ ftp_username='hrcbc';
 ftp_password='guoliang.xie';
 
 # HTTP
-o_http_state=$(option_test "http");
+
 
 
 # SVN
 if [[ ! -f "sha1.jar" ]]; then
-	wget -N https://raw.githubusercontent.com/hrcbc/centos/master/sha1.jar
+	wget -c https://raw.githubusercontent.com/hrcbc/centos/master/sha1.jar
 fi
-o_svn_state=$(option_test "svn");
+
 mysql_svn_password=$(cat /dev/urandom | head -n 10 | md5sum | head -c 10);
 svn_username="guoliang";
 svn_password=$(java -jar ./sha1.jar xgl.1234);
 svn_dbname="svnserver";
 svn_dbuser="svn";
 
-# Tomcat
+o_http_state=$(option_test "http");
+o_svn_state=$(option_test "svn");
 o_tomcat_state=$(option_test "tomcat");
+o_oracle_state=$(option_test "oracle");
+o_cobbler_state=$(option_test "cobbler");
+
+
+
+############################# Non-nullable parameter input #############################
+
+
+# 域名输入
+function input_host_name() {
+	if [[ -z "$host_name" ]]; then
+		printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"	
+		read tmp;
+		host_name="$tmp";
+	fi	
+}
+
+# Oracle超级密码输入
+function input_oracle_password() {
+	if [[ -z "$oracle_password" ]]; then
+		while [[ -z "$oracle_password" ]]
+		do
+			printf "Please input \e[33moracle password\e[0m:\n"	
+			read tmp;
+			oracle_password="$tmp";
+		done
+	fi	
+}
 
 
 function install()
@@ -222,16 +276,23 @@ function install()
 
 	install_tomcat;
 
+	#install_oracle12c;
+	install_oracle11gr2;
+
+	install_cobbler;
 }
 
 function setup_selinux()
 {
+	if [[  $(command_test "semanage") -eq 0 ]]; then
+		yum install -y policycoreutils policycoreutils-python selinux-policy selinux-policy-targeted libselinux-utils setroubleshoot-server setools setools-console mcstrans selinux-policy-devel;
+	fi;
+
 	if [[ $(sestatus |grep "disabled" | wc -l) -eq 1 ]]; then
 		echo "Setup selinux...";
 
-		yum install -y policycoreutils policycoreutils-python selinux-policy selinux-policy-targeted libselinux-utils setroubleshoot-server setools setools-console mcstrans;
-
-		sed -i "s/^SELINUX=disabled/SELINUX=enforcing" /etc/sysconfig/selinux;
+		sed -i "s/^SELINUX=disabled/SELINUX=enforcing/" /etc/sysconfig/selinux;
+		sed -i "s/^SELINUX=disabled/SELINUX=enforcing/" /etc/selinux/config;
 		# Enable selinux need restart
 		reboot;
 		exit 0;
@@ -261,7 +322,7 @@ function change_sshd_port()
 # 安装MySQL
 function install_mysql()
 {
-	if [[ $o_mysql_state -eq 1 ]] && [[ $(service_test "mariadb") -eq 0 ]]; then
+	if [[ $o_mysql_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "mariadb") -eq 0 ]]; then
 
 		echo "Start install mariadb..."
 		yum install -y mariadb mariadb-server libpam-mysql mysql-client pam-devel mysql-devel;
@@ -312,7 +373,7 @@ function install_mysql()
 # 安装VPN服务
 function install_vpn()
 {
-	if [[ $o_vpn_state -eq 1 ]] && [[ $(service_test "pptpd") -eq 0 || $(service_test "ipsec") -eq 0 || $(service_test "xl2tpd") -eq 0 ]]; then
+	if [[ $o_vpn_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "pptpd") -eq 0 || $(service_test "ipsec") -eq 0 || $(service_test "xl2tpd") -eq 0 ]]; then
 
 		echo "Install VPN at : $serverip $eth";
 
@@ -613,6 +674,7 @@ EOF
 		firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -p tcp -i ppp+ -j TCPMSS --syn --set-mss 1356;
 		firewall-cmd --reload;
 
+
 		systemctl enable pptpd.service ipsec.service xl2tpd.service;
 		systemctl restart pptpd.service ipsec.service xl2tpd.service;
 
@@ -626,10 +688,10 @@ EOF
 function install_ftp()
 {
 
-	if [[ $o_ftp_state -eq 1 ]] && [[ $(service_test "vsftpd") -eq 0 ]]; then
+	if [[ $o_ftp_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "vsftpd") -eq 0 ]]; then
 
 		# 先安装Mysql数据库
-		install_mysql;
+		install_mysql 1;
 
 		echo "Instal vsftpd...";
 	
@@ -736,9 +798,13 @@ EOF
 
 function install_httpd()
 {
-	if [[ $o_http_state -eq 1 ]] && [[ $(service_test "httpd") -eq 0 ]]; then
+	if [[ $o_http_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "httpd") -eq 0 ]]; then
+
+		clear;
 
 		echo "Install HTTP server..."
+
+		input_host_name;
 
 		yum -y install httpd httpd-devel php php-mysql php-gd php-ldap php-odbc php-pear php-xml php-xmlrpc php-mbstring php-snmp php-soap curl curl-devel php-mcrypt phpmyadmin;
 
@@ -781,7 +847,7 @@ EOF
 		fi
 
 		mkdir -p $site_dir;
-		mkdir -p site_dir/downloads;
+		
 		
 
 		# 配置phpMyAdmin
@@ -798,23 +864,28 @@ EOF
 ?>
 EOF
 
+		mkdir -p site_dir/downloads;
 		echo "test" > $site_dir/downloads/test.txt;
 
+		setenforce 0;
 
 		# 添加防火墙
 		firewall-cmd --permanent --zone=public --add-service=http
 		firewall-cmd --permanent --zone=public --add-service=https
 		firewall-cmd --reload
 
-		if [[ -n "$host_name" ]]; then
-			semanage fcontext -a -t public_content_rw_t "/var/www/$host_name(/.*)?"
-			restorecon -R -v /var/www/$host_name
-		fi
-
 
 		# 启动服务
 		systemctl enable httpd.service;
 		systemctl restart httpd.service;
+
+		setenforce 1;
+
+		if [[ -n "$host_name" ]]; then
+			semanage fcontext -a -t public_content_rw_t "/var/www/$host_name(/.*)?"
+			restorecon -R -v /var/www/$host_name
+		fi
+		
 		
 		echo "HTTP server installed success."
 
@@ -826,11 +897,11 @@ EOF
 
 function install_svn() 
 {
-	if [[ $o_svn_state -eq 1 ]] && [[  $(command_test "svnadmin") -eq 0 ]] && [ ! -f "/etc/httpd/conf.d/httpd-svn.conf" ]; then
+	if [[ $o_svn_state -eq 1 || $1 -eq 1 ]] && [[  $(command_test "svnadmin") -eq 0 ]] && [ ! -f "/etc/httpd/conf.d/httpd-svn.conf" ]; then
 
-		install_mysql;
+		install_mysql 1;
 
-		install_httpd;
+		install_httpd 1;
 
 		echo "Start installing SVN...";
 
@@ -911,7 +982,11 @@ EOF
 
 function install_tomcat()
 {
-	if [[ $o_tomcat_state -eq 1 ]]; then
+	if [[ $o_tomcat_state -eq 1 || $1 -eq 1  ]] && [[ $(service_test "tomcat") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing TOMCAT...";
+		input_host_name;
 
 		# 下载解压文件
 		wget -N http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.5/bin/apache-tomcat-8.5.5.tar.gz;
@@ -999,7 +1074,7 @@ EOF
       </Host>
 EOF
 
-			sed -i '/<Engine name="Catalina" defaultHost="localhost">/r $tmpfile' $TOMCAT_HOME/conf/server.xml;
+			sed -i "/<Engine[[:space:]]*name=\"Catalina\"[[:space:]]*defaultHost=\"localhost\">/r $tmpfile" $TOMCAT_HOME/conf/server.xml;
 			rm -rf $tmpfile;
 		else
 			sed -i "/[[:space:]]*unpackWARs=\"true\" autoDeploy=\"true\">/a \        <Context path=\"/\" docBase=\"$site_home\"></Context>" $TOMCAT_HOME/conf/server.xml;
@@ -1041,13 +1116,1004 @@ EOF
 		semanage fcontext -a -t public_content_rw_t "$site_home(/.*)?"
 		restorecon -R -v $site_home;
 
+		if [[ $http_proxy_tomcat -eq 1 ]]; then
+
+			install_httpd 1;
+
+			if [[ -n "$host_name" ]]; then
+				sed -i "/ProxyPassMatch \^\/svn_repos\/ \!\//d" /etc/httpd/vhost-conf.d/$host_name.conf
+				sed -i "/ProxyPass \/ http:\/\/$host_name:8080\//d" /etc/httpd/vhost-conf.d/$host_name.conf
+				sed -i "/ProxyPassReverse \/ http:\/\/$host_name:8080\//d" /etc/httpd/vhost-conf.d/$host_name.conf
+				sed -i "s/DirectoryIndex index.html index.php.*/DirectoryIndex index.html index.php index.jsp\n\   ProxyPassMatch \^\/svn_repos\/ \!\n\   ProxyPass \/ http:\/\/$host_name:8080\/\n\   ProxyPassReverse \/ http:\/\/$host_name:8080\//" /etc/httpd/vhost-conf.d/$host_name.conf
+
+			else
+				sed -i "/ProxyPassMatch \^\/svn_repos\/ \!\//d" /etc/httpd/conf/httpd.conf
+				sed -i "/ProxyPass \/ http:\/\/127.0.0.1:8080\//d" /etc/httpd/conf/httpd.conf 
+				sed -i "/ProxyPassReverse \/ http:\/\/127.0.0.1:8080\//d" /etc/httpd/conf/httpd.conf
+				cat >>/etc/httpd/conf/httpd.conf<<EOF
+ProxyPassMatch ^/svn_repos/ !
+ProxyPass / http://127.0.0.1:8080/
+ProxyPassReverse / http://127.0.0.1:8080/
+EOF
+			fi
+
+			systemctl restart httpd.service
+		fi
 
 		# 启动服务
 		systemctl daemon-reload;
 		systemctl enable tomcat.service;
-		systemctl start tomcat.service;
+		systemctl restart tomcat.service;
 
 		o_tomcat_state=2;
+
+		echo "TOMCAT installed success.";
+	fi
+}
+
+function install_oracle12c()
+{
+	# http://m.blog.itpub.net/29047826/viewspace-1422559/
+	# 
+	if [[ $o_oracle_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "oracle") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing Oracle...";
+
+		input_oracle_password;
+
+		oracle_sid="orcl12c"
+
+		setenforce 0;
+
+		# Create required OS users and groups for Oracle Database.
+		getent group oinstall || groupadd oinstall;
+		getent group dba || groupadd dba;
+		getent passwd oracle || useradd -g oinstall -G dba oracle;
+		echo "$oracle_password" | passwd --stdin oracle;
+
+		# Add kernel parameters 
+		sed -i "/fs\.aio-max-nr[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/fs\.file-max[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmall[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmmax[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmmni[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.sem[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.ipv4\.ip_local_port_range[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.rmem_default[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.rmem_max[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.wmem_default[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.wmem_max[[:space:]]*=.*/d" /etc/sysctl.conf;
+
+		cat >>/etc/sysctl.conf<<EOF
+fs.aio-max-nr = 1048576
+fs.file-max = 6815744
+kernel.shmall = 2097152
+kernel.shmmax = 4398046511104
+kernel.shmmni = 4096
+kernel.sem = 250 32000 100 128
+net.ipv4.ip_local_port_range = 9000 65500
+net.core.rmem_default = 262144
+net.core.rmem_max = 4194304
+net.core.wmem_default = 262144
+net.core.wmem_max = 1048586
+EOF
+		sysctl -p;
+		#sysctl -a;
+
+		# Specify limits for oracle user
+		sed -i "/^oracle.*/d" /etc/security/limits.conf;
+		cat >>/etc/security/limits.conf<<EOF
+oracle   soft   nofile   	131072
+oracle   hard   nofile   	131072
+oracle   soft   nproc    	131072
+oracle   hard   nproc    	131072
+oracle   soft   memlock    	50000000
+oracle   hard   memlock    	50000000
+oracle   soft   core     	unlimited
+oracle   hard   core     	unlimited
+EOF
+		
+	
+
+		#sed -i "/.*pam_limits.so/ d" /etc/pam.d/login;
+		#cat >>/etc/pam.d/login<<EOF
+#session    required     /lib64/security/pam_limits.so 
+#session    required     pam_limits.so 
+#EOF
+
+		# Download install file
+		if [[ ! -f "linuxamd64_12102_database_1of2.zip" ]]; then
+			wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_1of2.zip
+			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linuxamd64_12102_database_1of2.zip
+		fi
+		if [[ ! -f "linuxamd64_12102_database_2of2.zip" ]]; then
+			wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_2of2.zip
+			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linuxamd64_12102_database_2of2.zip
+		fi
+
+		rm -rf /stage;
+
+		unzip linuxamd64_12102_database_1of2.zip -d /stage/
+		unzip linuxamd64_12102_database_2of2.zip -d /stage/
+
+		
+		# Install required packages:
+		yum install -y binutils.x86_64 compat-libcap1.x86_64 gcc.x86_64 gcc-c++.x86_64 glibc.i686 glibc.x86_64 glibc-devel.i686 glibc-devel.x86_64 ksh compat-libstdc++-33 libaio.i686 libaio.x86_64 libaio-devel.i686 libaio-devel.x86_64 libgcc.i686 libgcc.x86_64 libstdc++.i686 libstdc++.x86_64 libstdc++-devel.i686 libstdc++-devel.x86_64 libXi.i686 libXi.x86_64 libXtst.i686 libXtst.x86_64 make.x86_64 sysstat.x86_64  glibc-headers  unixODBC unixODBC-devel  zlib-devel;
+
+		# 设置环境变量
+
+		oracle_dir="/oracle/12c";
+		export ORACLE_BASE=$oracle_dir/db_base
+
+		rm -rf $oracle_dir;
+		mkdir -p $ORACLE_BASE
+
+		chown -R oracle:oinstall $oracle_dir;
+		chmod -R ug+rwx $oracle_dir;
+
+		export ORACLE_HOME=$ORACLE_BASE/db_home
+		export ORACLE_SID=$oracle_sid;
+		export ORACLE_OWNER=oracle
+		export PATH=$ORACLE_HOME/bin:$PATH
+		export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib:/usr/lib64;
+		export CLASSPATH=$ORACLE_HOME/jlib:$ORACLE_HOME/rdbms/jlib
+
+		sed -i "/######## Start Limit Oracle #########/,/######## End Limit Oracle #########/d" /etc/profile;
+		sed -i "/export ORACLE_BASE=.*/d" /etc/profile;
+		sed -i "/export ORACLE_HOME=.*/d" /etc/profile;
+		sed -i "/export ORACLE_SID=.*/d" /etc/profile;
+		sed -i "/export ORACLE_OWNER=.*/d" /etc/profile;
+		sed -i "/export PATH=\$ORACLE_HOME\/bin:\$PATH/d" /etc/profile;
+		sed -i "/export LD_LIBRARY_PATH=.*/d" /etc/profile;
+		sed -i "/CLASSPATH=\$ORACLE_HOME\/jlib.*/d" /etc/profile;
+
+		cat >>/etc/profile<<EOF
+######## Start Limit Oracle #########
+if [ "\$USER" = "oracle" ]; then
+	if [ "\$SHELL" = "/bin/ksh" ]; then
+		ulimit -p 16384
+		ulimit -n 65536
+	else
+		ulimit -u 16384 -n 65536
+	fi
+fi
+######## End Limit Oracle #########
+
+export ORACLE_BASE=$oracle_dir/db_base
+export ORACLE_HOME=\$ORACLE_BASE/db_home
+export ORACLE_SID=$oracle_sid
+export ORACLE_OWNER=oracle
+export PATH=\$ORACLE_HOME/bin:\$PATH
+export LD_LIBRARY_PATH=\$ORACLE_HOME/lib:/lib:/usr/lib:/usr/lib64
+export CLASSPATH=\$ORACLE_HOME/jlib:\$ORACLE_HOME/rdbms/jlib
+EOF
+		source /etc/profile;
+
+		# 生成安装文件
+
+		rm -rf /stage/database/db_install.rsp;
+		cat >>/stage/database/db_install.rsp<<EOF
+oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v12.1.0
+oracle.install.option=INSTALL_DB_SWONLY
+ORACLE_HOSTNAME=localhost
+UNIX_GROUP_NAME=oinstall
+INVENTORY_LOCATION=$oracle_dir/oraInventory
+SELECTED_LANGUAGES=en
+ORACLE_HOME=$oracle_dir/db_base/db_home
+ORACLE_BASE=$oracle_dir/db_base
+oracle.install.db.InstallEdition=EE
+oracle.install.db.DBA_GROUP=dba
+oracle.install.db.OPER_GROUP=dba
+oracle.install.db.BACKUPDBA_GROUP=dba
+oracle.install.db.DGDBA_GROUP=dba
+oracle.install.db.KMDBA_GROUP=dba
+oracle.install.db.config.starterdb.characterSet=AL32UTF8
+oracle.install.db.config.starterdb.installExampleSchemas=false
+oracle.install.db.config.starterdb.password.ALL=$oracle_password
+oracle.install.db.config.starterdb.password.SYS=$oracle_password
+oracle.install.db.config.starterdb.password.SYSTEM=$oracle_password
+oracle.install.db.config.starterdb.password.DBSNMP=$oracle_password
+oracle.install.db.config.starterdb.password.PDBADMIN=$oracle_password
+SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+DECLINE_SECURITY_UPDATES=true
+
+EOF
+		
+		chown -R oracle:oinstall /stage/
+		chmod -R ug+rwx /stage/
+
+		# 运行安装
+
+		mkdir -p /etc/oracle;
+   		chown -R oracle:oinstall /etc/oracle;
+   		chmod -R ug+rwx /etc/oracle;
+		echo "Install is in progress,please wait...";
+		return;
+
+		RUN_INSTALL=$(expect -c "
+			set timeout 300;
+			spawn su - oracle -c \"/stage/database/runInstaller -silent -ignorePrereq -debug -showProgress -responseFile /stage/database/db_install.rsp\"
+			expect \"100% Done.\"
+			expect eof
+		");
+		
+		echo "$RUN_INSTALL"
+		if [[ $(echo $RUN_INSTALL | grep "100% Done."|wc -l) -eq 1 ]]; then
+			echo "Install finish."
+
+			if [[ -f "$oracle_dir/oraInventory/orainstRoot.sh" ]]; then
+				$oracle_dir/oraInventory/orainstRoot.sh
+			fi	
+			if [[ -f "$oracle_dir/db_base/db_home/root.sh" ]]; then
+				$oracle_dir/db_base/db_home/root.sh;
+			fi
+
+			# 添加防火墙
+			firewall-cmd --zone=public --add-port=1521/tcp --add-port=5500/tcp --add-port=5520/tcp --add-port=3938/tcp --permanent
+			firewall-cmd --reload;
+
+			# NETCA
+			rm -rf /stage/database/netca.rsp
+			cat >>/stage/database/netca.rsp<<EOF
+GENERAL]
+RESPONSEFILE_VERSION="12.1"
+CREATE_TYPE="CUSTOM"
+
+[oracle.net.ca]
+INSTALLED_COMPONENTS={"server","net8","javavm"}
+INSTALL_TYPE=""typical""
+LISTENER_NUMBER=1
+LISTENER_NAMES={"LISTENER"}
+
+LISTENER_PROTOCOLS={"TCP;1521"}
+
+LISTENER_START=""LISTENER""
+
+NAMING_METHODS={"TNSNAMES","ONAMES","HOSTNAME"}
+
+NSN_NUMBER=1
+NSN_NAMES={"EXTPROC_CONNECTION_DATA"}
+NSN_SERVICE={"PLSExtProc"}
+NSN_PROTOCOLS={"TCP;HOSTNAME;1521"}
+
+EOF
+			# 建库
+			gdbname="$oracle_sid.localhost";
+			if [[ -n "$host_name" ]]; then
+				gdbname="$oracle_sid.$host_name";
+			fi
+
+			rm -rf /stage/database/dbca.rsp
+			cat >>/stage/database/dbca.rsp<<EOF
+[GENERAL]
+RESPONSEFILE_VERSION = "12.1.0"
+OPERATION_TYPE = "createDatabase"
+[CREATEDATABASE]
+GDBNAME = "$gdbname"
+#DATABASECONFTYPE  = "SI"
+#RACONENODESERVICENAME = 
+#POLICYMANAGED = "false"
+#CREATESERVERPOOL = "false"
+#SERVERPOOLNAME = 
+#CARDINALITY = 
+#FORCE = "false"
+#PQPOOLNAME = 
+#PQCARDINALITY = 
+SID = "$oracle_sid"
+#CREATEASCONTAINERDATABASE =
+#NUMBEROFPDBS =
+#PDBNAME =
+# PDBADMINPASSWORD = ""
+#NODELIST=
+TEMPLATENAME = "General_Purpose.dbc"
+#OBFUSCATEDPASSWORDS = FALSE
+SYSPASSWORD = "$oracle_password"
+SYSTEMPASSWORD = "$oracle_password"
+#SERVICEUSERPASSWORD = "$oracle_password"
+EMCONFIGURATION = "NONE"
+#EMEXPRESSPORT = ""
+#RUNCVUCHECKS = FALSE
+#DBSNMPPASSWORD = "password"
+#OMSHOST = 
+#OMSPORT = 
+#EMUSER = 
+#EMPASSWORD= 
+#DVCONFIGURATION = "false"
+#DVOWNERNAME = ""
+#DVOWNERPASSWORD = ""
+#DVACCOUNTMANAGERNAME = ""
+#DVACCOUNTMANAGERPASSWORD = ""
+#OLSCONFIGURATION = "false"
+#DATAFILEJARLOCATION =
+#DATAFILEDESTINATION =
+#RECOVERYAREADESTINATION=
+#STORAGETYPE=FS
+#DISKGROUPNAME=DATA
+#ASMSNMP_PASSWORD=""
+#RECOVERYGROUPNAME=RECOVERY
+CHARACTERSET = "AL32UTF8"
+NATIONALCHARACTERSET= "UTF8"
+#REGISTERWITHDIRSERVICE= TRUE
+#DIRSERVICEUSERNAME= "name"
+#DIRSERVICEPASSWORD= "password"
+#WALLETPASSWORD= "password"
+#LISTENERS = "listener1,listener2"
+#VARIABLESFILE =
+#VARIABLES =
+#INITPARAMS =
+#SAMPLESCHEMA=TRUE
+#MEMORYPERCENTAGE = "40"
+#DATABASETYPE = "MULTIPURPOSE"
+#AUTOMATICMEMORYMANAGEMENT = "TRUE"
+#TOTALMEMORY = "800"
+EOF
+
+			echo "Create database is in progress,please wait...";
+
+			su - oracle -c "$ORACLE_HOME/bin/netca -silent -responseFile /stage/database/netca.rsp"
+
+			su - oracle -c "$ORACLE_HOME/bin/dbca -silent -responseFile /stage/database/dbca.rsp"
+
+			if [[ -f "/etc/oratab" ]]; then
+				sed -i "/$oracle_sid:.*/d" /etc/oratab
+			fi
+
+			chown -R oracle:oinstall /etc/oratab
+			chmod ug+rw /etc/oratab
+			sed -i "$ a $oracle_sid:$ORACLE_HOME:Y" /etc/oratab
+
+			
+
+			setenforce 1;
+			o_oracle_state=2;
+
+			echo "Oracle installed success.";
+		else
+			echo "Oracle installed failure.";
+		fi
+	fi
+}
+
+function install_oracle11gr2()
+{
+	if [[ $o_oracle_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "oracledb") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing Oracle 11G R2...";
+
+		input_oracle_password;
+
+		oracle_sid="orcl11g"
+
+		setenforce 0;
+
+		# Create required OS users and groups for Oracle Database.
+		getent group oinstall || groupadd oinstall;
+		getent group dba || groupadd dba;
+		getent passwd oracle || useradd -g oinstall -G dba oracle;
+		echo "$oracle_password" | passwd --stdin oracle;
+
+		# Add kernel parameters 
+		sed -i "/fs\.aio-max-nr[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/fs\.file-max[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmall[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmmax[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.shmmni[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/kernel\.sem[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.ipv4\.ip_local_port_range[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.rmem_default[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.rmem_max[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.wmem_default[[:space:]]*=.*/d" /etc/sysctl.conf;
+		sed -i "/net\.core\.wmem_max[[:space:]]*=.*/d" /etc/sysctl.conf;
+
+		cat >>/etc/sysctl.conf<<EOF
+fs.aio-max-nr = 1048576
+fs.file-max = 6815744
+kernel.shmall = 2097152
+kernel.shmmax = 4398046511104
+kernel.shmmni = 4096
+kernel.sem = 250 32000 100 128
+net.ipv4.ip_local_port_range = 9000 65500
+net.core.rmem_default = 262144
+net.core.rmem_max = 4194304
+net.core.wmem_default = 262144
+net.core.wmem_max = 1048586
+EOF
+		sysctl -p;
+		#sysctl -a;
+
+		# Specify limits for oracle user
+		sed -i "/^oracle.*/d" /etc/security/limits.conf;
+		cat >>/etc/security/limits.conf<<EOF
+oracle   soft   nofile   	1024
+oracle   hard   nofile   	65536
+oracle   soft   nproc    	2047
+oracle   hard   nproc    	16384
+oracle   soft   stack   	10240
+EOF
+		
+	
+
+		#sed -i "/.*pam_limits.so/ d" /etc/pam.d/login;
+		#cat >>/etc/pam.d/login<<EOF
+#session    required     /lib64/security/pam_limits.so 
+#session    required     pam_limits.so 
+#EOF
+
+		# Download install file
+		if [[ ! -f "linux.x64_11gR2_database_1of2.zip" ]]; then
+			wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_1of2.zip
+			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linux.x64_11gR2_database_1of2.zip
+		fi
+		if [[ ! -f "linux.x64_11gR2_database_2of2.zip" ]]; then
+			wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_2of2.zip
+			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linux.x64_11gR2_database_2of2.zip
+		fi
+
+		rm -rf /stage;
+
+		unzip linux.x64_11gR2_database_1of2.zip -d /stage/
+		unzip linux.x64_11gR2_database_2of2.zip -d /stage/
+
+		
+		# Install required packages:
+		yum install -y binutils.x86_64 compat-libcap1.x86_64 gcc.x86_64 gcc-c++.x86_64 glibc.i686 glibc.x86_64 glibc-devel.i686 glibc-devel.x86_64 ksh compat-libstdc++-33 libaio.i686 libaio.x86_64 libaio-devel.i686 libaio-devel.x86_64 libgcc.i686 libgcc.x86_64 libstdc++.i686 libstdc++.x86_64 libstdc++-devel.i686 libstdc++-devel.x86_64 libXi.i686 libXi.x86_64 libXtst.i686 libXtst.x86_64 make.x86_64 sysstat.x86_64  glibc-headers  unixODBC unixODBC-devel  zlib-devel elfutils-libelf-devel elfutils-libelf-devel-static numactl-devel pcre-devel;
+
+		# 设置环境变量
+
+		oracle_dir="/oracle/11g";
+		oracle_hostname=$(hostname);
+		export ORACLE_BASE=$oracle_dir/db_base
+
+		rm -rf $oracle_dir;
+		mkdir -p $ORACLE_BASE
+
+		chown -R oracle:oinstall $oracle_dir;
+		chmod -R ug+rwx $oracle_dir;
+
+		export ORACLE_HOME=$ORACLE_BASE/db_home
+		export ORACLE_SID=$oracle_sid;
+		export ORACLE_OWNER=oracle
+		export PATH=$ORACLE_HOME/bin:$PATH
+		export LD_LIBRARY_PATH=$ORACLE_HOME/lib:/lib:/usr/lib:/usr/lib64;
+		export CLASSPATH=$CLASSPATH:$ORACLE_HOME/jlib:$ORACLE_HOME/rdbms/jlib
+
+		sed -i "/######## Start Limit Oracle #########/,/######## End Limit Oracle #########/d" /etc/profile;
+		sed -i "/export ORACLE_BASE=.*/d" /etc/profile;
+		sed -i "/export ORACLE_HOME=.*/d" /etc/profile;
+		sed -i "/export ORACLE_SID=.*/d" /etc/profile;
+		sed -i "/export ORACLE_OWNER=.*/d" /etc/profile;
+		sed -i "/export PATH=\$ORACLE_HOME\/bin:\$PATH/d" /etc/profile;
+		sed -i "/export LD_LIBRARY_PATH=.*/d" /etc/profile;
+		sed -i "/export CLASSPATH=\$CLASSPATH:\$ORACLE_HOME\/jlib.*/d" /etc/profile;
+
+		cat >>/etc/profile<<EOF
+######## Start Limit Oracle #########
+if [ \$USER = "oracle" ]; then
+	if [ \$SHELL = "/bin/ksh" ]; then
+		ulimit -p 16384
+		ulimit -n 65536
+	else
+		ulimit -u 16384 -n 65536
+	fi
+fi
+######## End Limit Oracle #########
+
+export ORACLE_BASE=$oracle_dir/db_base
+export ORACLE_HOME=\$ORACLE_BASE/db_home
+export ORACLE_SID=$oracle_sid
+export ORACLE_OWNER=oracle
+export PATH=\$ORACLE_HOME/bin:\$PATH
+export LD_LIBRARY_PATH=\$ORACLE_HOME/lib:/lib:/usr/lib:/usr/lib64
+export CLASSPATH=\$CLASSPATH:\$ORACLE_HOME/jlib:\$ORACLE_HOME/rdbms/jlib
+EOF
+		source /etc/profile;
+
+		# 生成安装文件
+
+		rm -rf /stage/database/db_install.rsp;
+		cat >>/stage/database/db_install.rsp<<EOF
+oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v11_2_0
+oracle.install.option=INSTALL_DB_SWONLY
+ORACLE_HOSTNAME=$oracle_hostname
+UNIX_GROUP_NAME=oinstall
+INVENTORY_LOCATION=$oracle_dir/oraInventory
+SELECTED_LANGUAGES=en,zh_CN
+ORACLE_HOME=$oracle_dir/db_base/db_home
+ORACLE_BASE=$oracle_dir/db_base
+oracle.install.db.InstallEdition=EE
+oracle.install.db.isCustomInstall=false
+oracle.install.db.DBA_GROUP=dba
+oracle.install.db.OPER_GROUP=dba
+oracle.install.db.config.starterdb.type=GENERAL_PURPOSE
+oracle.install.db.config.starterdb.globalDBName=$oracle_sid
+oracle.install.db.config.starterdb.SID=$oracle_sid
+oracle.install.db.config.starterdb.characterSet=AL32UTF8
+oracle.install.db.config.starterdb.password.ALL=$oracle_password
+SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+DECLINE_SECURITY_UPDATES=true
+EOF
+		
+		chown -R oracle:oinstall /stage/
+		chmod -R ug+rwx /stage/
+
+		# 运行安装
+
+		mkdir -p /etc/oracle;
+   		chown -R oracle:oinstall /etc/oracle;
+   		chmod -R ug+rwx /etc/oracle;
+		echo "Install is in progress,please wait...";
+		
+
+		RUN_INSTALL=$(expect -c "
+			set timeout 15;
+			spawn su - oracle -c \"/stage/database/runInstaller -silent -ignorePreReq -force -responseFile /stage/database/db_install.rsp\"
+			expect \"You can find the log of this install session at:\"
+			expect eof
+			exit
+		");
+		
+		echo "$RUN_INSTALL"
+
+		logfile=$(echo "$RUN_INSTALL" |grep -w "$oracle_dir/oraInventory/logs/installActions[[:graph:]]*.log" |awk -v oracle_dir=$oracle_dir 'NR==1{print substr($0,index($0,oracle_dir),index($0,".log")-index($0,oracle_dir) + 4)}');
+		echo "Log file is $logfile."
+		clear;
+		sleep 3;
+
+		if [[ -n "$logfile" ]]; then
+			INSTALL_LOG=$(expect -c "
+				set timeout 120
+				spawn tail -f "$logfile"
+				expect \"Shutdown Oracle Database 11g Release 2 Installer\"
+				expect eof
+				exit
+			");	
+			echo $INSTALL_LOG;
+
+			echo "Install finish."
+
+			if [[ -f "$oracle_dir/oraInventory/orainstRoot.sh" ]]; then
+				$oracle_dir/oraInventory/orainstRoot.sh
+			fi	
+			if [[ -f "$oracle_dir/db_base/db_home/root.sh" ]]; then
+				$oracle_dir/db_base/db_home/root.sh;
+			fi
+
+			# 添加防火墙
+			firewall-cmd --zone=public --add-port=1521/tcp --add-port=5500/tcp --add-port=5520/tcp --add-port=3938/tcp --permanent
+			firewall-cmd --reload;
+
+			# NETCA
+			rm -rf /stage/database/netca.rsp
+			cat >>/stage/database/netca.rsp<<EOF
+[GENERAL]
+RESPONSEFILE_VERSION="11.2"
+CREATE_TYPE="CUSTOM"
+
+[oracle.net.ca]
+INSTALLED_COMPONENTS={"server","net8","javavm"}
+INSTALL_TYPE=""typical""
+LISTENER_NUMBER=1
+LISTENER_NAMES={"LISTENER"}
+LISTENER_PROTOCOLS={"TCP;1521"}
+LISTENER_START=""LISTENER""
+NAMING_METHODS={"TNSNAMES","ONAMES","HOSTNAME"}
+NSN_NUMBER=1
+NSN_NAMES={"EXTPROC_CONNECTION_DATA"}
+NSN_SERVICE={"PLSExtProc"}
+NSN_PROTOCOLS={"TCP;HOSTNAME;1521"}
+
+EOF
+			# 建库
+			gdbname="$oracle_sid.localhost";
+			if [[ -n "$host_name" ]]; then
+				gdbname="$oracle_sid.$host_name";
+			fi
+
+			rm -rf /stage/database/dbca.rsp
+			cat >>/stage/database/dbca.rsp<<EOF
+[GENERAL]
+RESPONSEFILE_VERSION = "11.2.0"
+OPERATION_TYPE = "createDatabase"
+
+[CREATEDATABASE]
+GDBNAME = "$oracle_sid"
+SID = "$oracle_sid"
+TEMPLATENAME = "General_Purpose.dbc"
+SYSPASSWORD = "$oracle_password"
+SYSTEMPASSWORD = "$oracle_password"
+CHARACTERSET = "AL32UTF8"
+NATIONALCHARACTERSET= "UTF8"
+EOF
+
+			echo "Create database is in progress,please wait...";
+
+
+			if [[ -f "/etc/oratab" ]]; then
+				sed -i "/$oracle_sid:.*/d" /etc/oratab
+			fi
+
+			su - oracle -c "$ORACLE_HOME/bin/netca /silent /responseFile /stage/database/netca.rsp"
+
+			rm -rf $ORACLE_HOME/network/admin/listener.ora;
+			cat>>$ORACLE_HOME/network/admin/listener.ora<<EOF
+# listener.ora Network Configuration File: $ORACLE_HOME/network/admin/listener.ora
+# Generated by Oracle configuration tools.
+
+SID_LIST_LISTENER =
+  (SID_LIST =
+    (SID_DESC =
+      (GLOBAL_DBNAME = $oracle_sid)
+      (ORACLE_HOME = $ORACLE_HOME)
+      (SID_NAME = $oracle_sid)
+    )
+  )
+
+LISTENER =
+  (DESCRIPTION_LIST =
+    (DESCRIPTION =
+      (ADDRESS = (PROTOCOL = IPC)(KEY = EXTPROC1521))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = localhost)(PORT = 1521))
+    )
+  )
+
+ADR_BASE_LISTENER = $ORACLE_BASE
+EOF
+			# 建库
+			su - oracle -c "$ORACLE_HOME/bin/dbca -silent -responseFile /stage/database/dbca.rsp"
+
+			# 创建服务
+			cat>>$ORACLE_HOME/bin/oracledb<<EOF
+#!/bin/bash
+
+export ORACLE_BASE=$ORACLE_BASE
+export ORACLE_HOME=$ORACLE_HOME
+export ORACLE_OWNR=oracle
+export PATH=\$PATH:\$ORACLE_HOME/bin
+
+if [ ! -f \$ORACLE_HOME/bin/dbstart -o ! -d \$ORACLE_HOME ]; then
+	echo "Oracle startup: cannot start"
+	exit 1
+fi
+
+case "\$1" in
+        start)
+                # Oracle listener and instance startup
+                echo -n "Starting Oracle: "
+                if [[ \$USER = \$ORACLE_OWNR ]]; then
+                        \$ORACLE_HOME/bin/lsnrctl start
+                        \$ORACLE_HOME/bin/dbstart \$ORACLE_HOME
+                        \$ORACLE_HOME/bin/emctl start dbconsole
+                else
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/lsnrctl start"
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/dbstart \$ORACLE_HOME"
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/emctl start dbconsole"
+                fi
+                touch /var/lock/oracle
+                echo "OK"
+                ;;
+        stop)
+                # Oracle listener and instance shutdown
+                echo -n "Shutdown Oracle: "
+                if [[ \$USER = \$ORACLE_OWNR ]]; then
+                        \$ORACLE_HOME/bin/emctl stop dbconsole
+                        \$ORACLE_HOME/bin/lsnrctl stop
+                        \$ORACLE_HOME/bin/dbshut \$ORACLE_HOME
+                else
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/emctl stop dbconsole"
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/lsnrctl stop"
+                        su \$ORACLE_OWNR -c "\$ORACLE_HOME/bin/dbshut \$ORACLE_HOME"
+                fi
+                rm -f /var/lock/oracle
+                echo "OK"
+                ;;
+        reload|restart)
+                \$0 stop
+                \$0 start
+                ;;
+        *)
+                echo "Usage: centos.sh start|stop|restart|reload"
+                exit 1
+esac
+
+exit 0
+EOF
+
+			rm -rf /etc/sysconfig/oracledb;
+			cat >>/etc/sysconfig/oracledb<<EOF
+ORACLE_BASE=$ORACLE_BASE
+ORACLE_HOME=$ORACLE_HOME
+ORACLE_SID=$oracle_sid
+EOF
+			chown -R oracle:dba /etc/sysconfig/oracledb
+			chmod ug+rwx /etc/sysconfig/oracledb
+			
+			rm -rf /usr/lib/systemd/system/oracledb.service;
+			cat >>/usr/lib/systemd/system/oracledb.service<<EOF
+[Unit]
+Description=Oracle Service
+After=network.target
+
+[Service]
+Type=forking
+EnvironmentFile=/etc/sysconfig/oracledb
+ExecStart=$ORACLE_HOME/bin/oracledb start
+ExecStop=$ORACLE_HOME/bin/oracledb stop
+User=oracle
+
+[Install]
+WantedBy=multi-user.target
+
+EOF
+
+
+			sed -i "$ a $oracle_sid:$ORACLE_HOME:Y" /etc/oratab
+
+			chown -R oracle:dba /etc/oratab
+			chmod ug+rw /etc/oratab
+
+			chown -R oracle:dba $oracle_dir;
+			chmod -R ug+rwx $oracle_dir;
+			
+			setenforce 1;
+
+			# 启动服务
+			systemctl daemon-reload;
+			systemctl enable oracledb.service;
+
+			chmod 777 /var/tmp/.oracle
+
+			systemctl restart oracledb.service;
+
+			o_oracle_state=2;
+
+			echo "Oracle installed success.";
+		else
+			echo "Oracle installed failure.";
+		fi
+	fi
+}
+
+function install_cobbler() 
+{
+	if [[ $o_cobbler_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "cobblerd") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing Cobbler...";
+
+		install_httpd 1;
+
+		# Install
+		yum install -y cobbler cobbler-web dnsmasq syslinux pykickstart dhcp tftp-server tftp bind xinetd fence-agents;
+		#yum install -y perl-libwww perl-Compress-Zlib perl-Digest-SHA1 perl-Net* rsync perl-LockFile-Simple perl-Digest-MD5-M4p;
+		#yum install system-config-kickstart
+   		#system-config-kickstart
+		#wget http://archive.ubuntu.com/ubuntu/pool/universe/d/debmirror/debmirror_2.10ubuntu1.tar.gz
+		#tar -xzvf debmirror_2.10ubuntu1.tar.gz
+		#cd debmirror-2.10ubuntu1
+		#make
+		#cp debmirror /usr/local/bin/
+		#cp debmirror.1 /usr/share/man/man1/
+		#cpan install Net::INET6Glue
+		# Okay, debmirror now works, but needs that wrapper script:
+		#(ubuntu_mirror.sh)
+		# #!/bin/bash
+		# arch=amd64
+		# section=main,restricted,universe,multiverse
+		# release=lucid
+		# server=us.archive.ubuntu.com
+		# inPath=/ubuntu
+		# proto=http
+		# proxy=http://proxy.local:8888
+		# outpath=/var/www/repos/ubuntu
+		# 
+		# debmirror       -a $arch \
+		#                 --no-source \
+		#                 -s $section \
+		#                 -h $server \
+		#                 -d $release \
+		#                 -r $inPath \
+		#                 --progress \
+		#                 --ignore-release-gpg \
+		#                 --no-check-gpg \
+		#                 --proxy=$proxy \
+		#                 -e $proto \
+		#                 $outPath
+
+		cd $cur_path;
+
+		rm -rf /etc/cobbler/settings.bak;
+
+		# 修改配置
+		cp /etc/cobbler/settings /etc/cobbler/settings.bak;
+		rand_pass=$(openssl passwd -1 -salt 'cobbler' 'abcd1234')
+		sed -i "s/^server: 127.0.0.1/server: $serverip/" /etc/cobbler/settings;
+		sed -i "s/^next_server: 127.0.0.1/next_server: $serverip/" /etc/cobbler/settings;
+		sed -i "s/^default_password_crypted:.*/default_password_crypted: \"$rand_pass\"/" /etc/cobbler/settings;
+		sed -i "s/^manage_dhcp:.*/manage_dhcp:\ 1/" /etc/cobbler/settings;
+		sed -i "s/option routers[[:space:]]*.*/option routers\             $serverip;/" /etc/cobbler/dhcp.template;
+		sed -i "s/disable[[:space:]]*=[[:space:]]*yes/disable\			=\ no/" /etc/xinetd.d/tftp;
+		
+		# Selinux
+		mkdir -p /var/lib/cobbler/policy;
+		rm -rf /var/lib/cobbler/policy/cobbler-web.te
+		cat >> /var/lib/cobbler/policy/cobbler-web.te<<EOF
+policy_module(cobbler-web, 1.0)
+
+gen_require(\
+type cobblerd_t;
+type systemd_unit_file_t;
+)
+
+allow cobblerd_t systemd_unit_file_t:file getattr;
+EOF
+		cd /var/lib/cobbler/policy
+		make -f /usr/share/selinux/devel/Makefile cobbler-web.pp
+		semodule -i cobbler-web.pp
+		cd $cur_path;
+
+		
+
+		# 暂时关闭Selinux
+		setenforce 0;		
+		# Firewall
+		# /etc/sysconfig/iptables
+		# -A INPUT -m state --state NEW -m udp -p udp -m udp --dport 69 -j ACCEPT
+
+		firewall-cmd --zone=public --add-service=tftp --permanent;
+		firewall-cmd --zone=public --add-service=dhcp --permanent;
+		# DHCP
+		firewall-cmd --zone=public --add-port=68/tcp --permanent;
+		firewall-cmd --zone=public --add-port=123/udp --permanent;
+		firewall-cmd --zone=public --add-port=25150/udp --add-port=25151/tcp --add-port=25152/tcp --permanent;
+		# DNS
+		firewall-cmd --zone=public --add-port=53/tcp --add-port=53/udp --permanent;
+
+		firewall-cmd --reload;
+
+		systemctl restart httpd.service;
+
+		systemctl enable rsyncd.service cobblerd.service tftp.service xinetd.service dhcpd.service;
+		systemctl restart cobblerd.service;
+		systemctl restart httpd.service rsyncd.service tftp.service xinetd.service;
+
+		cobbler sync;
+		cobbler get-loaders;
+
+		cobbler sync;
+		systemctl restart dhcpd.service;
+
+		# 添加镜像
+
+		if [[ ! -f "CentOS-7-x86_64-DVD-1511.iso" ]]; then
+			wget -c http://mirrors.aliyun.com/centos/7/isos/x86_64/CentOS-7-x86_64-DVD-1511.iso
+		fi
+
+		rm -rf /var/lib/cobbler/kickstarts/centos7.cfg;
+		cat >>/var/lib/cobbler/kickstarts/centos7.cfg<<EOF
+# kickstart template for CentOS7
+# (includes %end blocks)
+# do not use with earlier distros
+
+#platform=x86, AMD64, or Intel EM64T
+# System authorization information
+auth  --useshadow  --enablemd5
+# System bootloader configuration
+bootloader --location=mbr
+# Partition clearing information
+clearpart --all --initlabel
+# Use text mode install
+text
+# Firewall configuration
+firewall --enabled
+# Run the Setup Agent on first boot
+firstboot --disable
+# System keyboard
+keyboard us
+# System language
+lang en_US
+# Use network installation
+url --url=\$tree
+# If any cobbler repo definitions were referenced in the kickstart profile, include them here.
+$yum_repo_stanza
+# Network information
+\$SNIPPET('network_config')
+# Reboot after installation
+reboot
+
+#Root password
+rootpw --iscrypted \$default_password_crypted
+# SELinux configuration
+selinux --enforcing
+# Do not configure the X Window System
+skipx
+# System timezone
+timezone Asia/Shanghai --isUtc
+# Install OS instead of upgrade
+install
+# Clear the Master Boot Record
+zerombr
+# Allow anaconda to partition the system as needed
+autopart
+
+%pre
+\$SNIPPET('log_ks_pre')
+\$SNIPPET('kickstart_start')
+\$SNIPPET('pre_install_network_config')
+# Enable installation monitoring
+\$SNIPPET('pre_anamon')
+%end
+
+%packages
+\$SNIPPET('func_install_if_enabled')
+%end
+
+%post --nochroot
+\$SNIPPET('log_ks_post_nochroot')
+%end
+
+%post
+\$SNIPPET('log_ks_post')
+# Start yum configuration
+\$yum_config_stanza
+# End yum configuration
+\$SNIPPET('post_install_kernel_options')
+\$SNIPPET('post_install_network_config')
+\$SNIPPET('func_register_if_enabled')
+\$SNIPPET('download_config_files')
+\$SNIPPET('koan_environment')
+\$SNIPPET('redhat_register')
+\$SNIPPET('cobbler_register')
+# Enable post-install boot notification
+\$SNIPPET('post_anamon')
+# Start final steps
+\$SNIPPET('kickstart_done')
+# End final steps
+%end
+EOF
+		mount -t iso9660 -o loop,ro CentOS-7-x86_64-DVD-1511.iso /mnt
+		cobbler import --name=CentOS7 --arch=x86_64 --path=/mnt
+		cobbler profile add --name=CentOS7 --distro=CentOS7-x86_64 --kickstart=/var/lib/cobbler/kickstarts/centos7.cfg;
+		cobbler system add --name=CentOS7 --profile=CentOS7
+		cobbler sync;
+
+		# 开启Selinux 
+		setenforce 1;
+
+		# 设置权限
+		setsebool -P cobbler_can_network_connect 1;
+		setsebool -P httpd_can_network_connect_cobbler 1;
+		setsebool -P httpd_can_network_connect true;
+		setsebool -P httpd_serve_cobbler_files 1
+		setsebool -P cobbler_use_nfs 1
+   		setsebool -P httpd_can_network_connect_cobbler 1
+   		setsebool -P cobbler_use_cifs 1
+   		setsebool -P cobbler_anon_write 1
+
+		setsebool -P tftp_anon_write 1;
+		setsebool -P tftp_home_dir 1;
+
+		semanage fcontext -a -t public_content_rw_t "/var/www/cobbler(/.*)?";
+		restorecon -R -v /var/www/cobbler;
+
+		semanage fcontext -a -t dhcp_etc_t "/etc/dhcp(/.*)?";
+		restorecon -R -v /etc/dhcp;
+		
+		semanage fcontext -a -t public_content_rw_t "/var/lib/cobbler(/.*)?";
+		restorecon -R -v /var/lib/cobbler;
+
+		semanage fcontext -a -t public_content_rw_t "/var/lib/tftpboot(/.*)?"
+		restorecon -R -v /var/lib/tftpboot;
+
+		semanage fcontext -a -t cobblerd_exec_t '/srv/cobblerd/content(/.*)?'
+       	restorecon -R -v /srv/mycobblerd_content;
+
+       	semanage fcontext -a -t httpd_sys_rw_content_t "/var/lib/cobbler/webui_sessions(/.*)?"
+       	restorecon -R -v /var/lib/cobbler/webui_sessions;
+
+		o_cobbler_state=2;
+		echo "Cobbler installed success.";
 	fi
 }
 
@@ -1055,7 +2121,3 @@ case $action in
 	install)
 		install;;
 esac
-
-
-
-
