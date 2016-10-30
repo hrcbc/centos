@@ -20,6 +20,7 @@ USAGE="
  	--host-name  		    Domain name for the host.
  	--http-proxy-tomcat     When the value is 1, set the HTTP reverse proxy to Tomcat,default 1
  	--oracle-password   	Specify the super user‘s password
+ 	--weblogic-password		Specify the Weblogic console user‘s password
 ";
 
 
@@ -111,7 +112,10 @@ http_proxy_tomcat=1
 # Oracle
 oracle_password="";
 
-ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid: -- "$@"`
+# Weblogic 
+weblogic_password="abcd1234"
+
+ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password: -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -134,19 +138,23 @@ do
 			shift;;
 
 		--host-name)
-			host-name=$2;
+			host_name="$2";
 			shift 2;;	
 
 		--http-proxy-tomcat)
-			http_proxy_tomcat=$2;
+			http_proxy_tomcat="$2";
 			shift 2;;		
 
 		--oracle-password)
-			oracle_password=$2;
+			oracle_password="$2";
+			shift 2;;
+
+		--weblogic-password)
+			weblogic_password="$2";
 			shift 2;;
 
 		--oracle-sid)
-			oracle-sid=$2;
+			oracle-sid="$2";
 			shift 2;;
 
 		--)
@@ -229,6 +237,7 @@ o_svn_state=$(option_test "svn");
 o_tomcat_state=$(option_test "tomcat");
 o_oracle_state=$(option_test "oracle");
 o_cobbler_state=$(option_test "cobbler");
+o_weblogic_state=$(option_test "weblogic");
 
 
 
@@ -280,6 +289,8 @@ function install()
 	install_oracle11gr2;
 
 	install_cobbler;
+
+	install_weblogic12;
 }
 
 function setup_selinux()
@@ -989,7 +1000,10 @@ function install_tomcat()
 		input_host_name;
 
 		# 下载解压文件
-		wget -N http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.5/bin/apache-tomcat-8.5.5.tar.gz;
+		if [[ ! -f "apache-tomcat-8.5.5.tar.gz" ]]; then
+			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.5/bin/apache-tomcat-8.5.5.tar.gz;	
+		fi
+		
 		rm -rf /var/local/apache-tomcat-8.5.5;
 		rm -rf /var/local/tomcat;
 
@@ -1647,7 +1661,7 @@ EOF
 		
 
 		RUN_INSTALL=$(expect -c "
-			set timeout 15;
+			set timeout -1;
 			spawn su - oracle -c \"/stage/database/runInstaller -silent -ignorePreReq -force -responseFile /stage/database/db_install.rsp\"
 			expect \"You can find the log of this install session at:\"
 			expect eof
@@ -1663,7 +1677,7 @@ EOF
 
 		if [[ -n "$logfile" ]]; then
 			INSTALL_LOG=$(expect -c "
-				set timeout 120
+				set timeout -1
 				spawn tail -f "$logfile"
 				expect \"Shutdown Oracle Database 11g Release 2 Installer\"
 				expect eof
@@ -2114,6 +2128,363 @@ EOF
 
 		o_cobbler_state=2;
 		echo "Cobbler installed success.";
+	fi
+}
+
+function install_weblogic12() 
+{
+	if [[ $o_weblogic_state -eq 1 || $1 -eq 1  ]] && [[ $(service_test "weblogicd") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing WebLogic...";
+		input_host_name;
+
+		# 创建用户
+		getent group bea || groupadd bea;
+		getent passwd weblogic || useradd -g bea weblogic;
+
+		yum -y install binutils compat-libcap1 compat-libstdc++-33 gcc gcc-c++ glibc glibc-devel libaio libaio-devel libgcc libstdc++ libstdc++-devel make openmotif openmotif22 sysstat
+
+		# 下载解压文件
+		if [[ ! -f "fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip" ]]; then
+			wget -c http://home.guoliang.info/Tools/Network/Server/fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip;
+		fi
+
+		rm -rf /stage;
+		mkdir -p /stage/wls12c;
+		unzip fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip -d /stage/wls12c
+
+		ORACLE_BASE=/var/local/wls1212
+		MW_HOME=$ORACLE_BASE/weblogic
+		DOMAIN_NAME="localhost"
+		if [[ -n "$host_name" ]]; then
+			DOMAIN_NAME=$host_name;
+		fi
+
+		DOMAIN_HOME=$ORACLE_BASE/domains/$DOMAIN_NAME
+
+		export ORACLE_BASE;
+		export MW_HOME;
+
+		sed -i "/export MW_HOME=.*/d" /etc/profile;
+
+		cat >>/etc/profile<<EOF
+export MW_HOME=$MW_HOME
+EOF
+		
+
+		rm -rf /home/weblogic/.bash_profile;
+		cat >>/home/weblogic/.bash_profile<<EOF
+export ORACLE_HOME=$MW_HOME
+export DOMAIN_HOME=$DOMAIN_HOME
+export JAVA_OPTIONS='-Djava.security.egd=file:/dev/./urandom -DUseSunHttpHandler=true'
+export CLASSPATH=$CLASSPATH:$MW_HOME/wlserver/server/lib/weblogic.jar
+EOF
+
+		cat >>/stage/wls12c/oraInst.loc<<EOF
+inventory_loc=$ORACLE_BASE/oraInventory
+inst_group=bea
+EOF
+		cat >>/stage/wls12c/wls.resp<<EOF
+[ENGINE]
+#DO NOT CHANGE THIS.
+Response File Version=1.0.0.0.0
+
+[GENERIC]
+ORACLE_BASE=$ORACLE_BASE
+ORACLE_HOME=$MW_HOME
+INSTALL_TYPE=WebLogic Server
+DECLINE_SECURITY_UPDATES=true
+SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
+EOF
+
+		rm -rf /stage/wls12c/create_domain.rsp;
+		cat >>/stage/wls12c/create_domain.rsp<<EOF
+read template from "$MW_HOME/wlserver/common/templates/wls/wls.jar";
+set JavaHome "$JAVA_HOME";
+set ServerStartMode "prod";
+
+find Server "AdminServer" as AdminServer;
+set AdminServer.ListenAddress "";
+set AdminServer.ListenPort "7001";
+set AdminServer.SSL.Enabled "true";
+set AdminServer.SSL.ListenPort "7002";
+
+
+find User "weblogic" as u1;
+set u1.password "$weblogic_password";
+
+write domain to "$DOMAIN_HOME";
+
+close template;
+
+EOF
+		
+		rm -rf $ORACLE_BASE;
+
+		mkdir -p $MW_HOME;
+		mkdir -p $ORACLE_BASE/oraInventory;
+		mkdir -p $DOMAIN_HOME;
+
+		chown -R weblogic:bea /stage/wls12c
+		chmod -R ug+rwx /stage/wls12c
+
+		chown -R weblogic:bea $ORACLE_BASE
+		chmod -R ug+rwx $ORACLE_BASE
+		
+		rm -rf /tmp/OraInstall*
+		rm -rf /etc/oraInst.loc 
+
+		source /etc/profile
+		
+		echo "Weblogic installing,Please wait..."
+
+		RUN_INSTALL=$(expect -c "
+			set timeout -1;
+			spawn su - weblogic -c \"java -jar -d64 /stage/wls12c/fmw_12.2.1.2.0_wls_quick.jar -silent -invPtrLoc /stage/wls12c/oraInst.loc -responseFile /stage/wls12c/wls.resp ORACLE_HOME=$MW_HOME\"
+			expect \"The installation of Oracle Fusion Middleware 12c WebLogic and Coherence Developer 12.2.1.2.0 completed successfully\"
+			expect eof
+			exit
+		");
+		
+		echo "$RUN_INSTALL"
+
+		if [[ $(echo "$RUN_INSTALL" | grep "The installation of Oracle Fusion Middleware 12c WebLogic and Coherence Developer 12.2.1.2.0 completed successfully"|wc -l) -eq 1 ]]; then
+			echo "Install finish."
+			echo "Creating domain,Please wait..."
+
+			RUN_INSTALL=$(expect -c "
+				set timeout -1;
+				spawn su - weblogic -c \"$MW_HOME/oracle_common/common/bin/config.sh -mode=silent -silent_script=/stage/wls12c/create_domain.rsp -logfile=/var/log/create_domain.log\"
+				expect \"succeed: close template\"
+				expect eof
+				exit
+			");	
+
+			echo "$RUN_INSTALL"
+
+			if [[ $(echo "$RUN_INSTALL" | grep "succeed: write Domain to"|wc -l) -eq 1 ]]; then
+
+				mkdir -p $DOMAIN_HOME/servers/AdminServer/security
+				cat >>$DOMAIN_HOME/servers/AdminServer/security/boot.properties<<EOF
+username=weblogic
+password=$weblogic_password
+EOF
+
+				cat >>$DOMAIN_HOME/weblogic<<EOF
+#!/bin/bash
+
+export BEA_BASE=$ORACLE_BASE
+export DOMAIN_HOME=$DOMAIN_HOME
+export DOMAIN_LOG=\$DOMAIN_HOME/logs/`date -d now +%Y%m%d%H%M%S`.log
+export PATH=\$PATH:\$DOMAIN_HOME/bin
+DOMAIN_OWNER="weblogic"
+
+if [ ! -f \$DOMAIN_HOME/bin/startWebLogic.sh -o ! -d \$DOMAIN_HOME ]
+then
+    echo "WebLogic startup:cannot start"
+    exit 1
+fi
+# depending on parameter -- startup,shutdown,restart
+case "\$1" in
+	start)
+	    echo -n "Starting Weblogic:log file \$DOMAIN_LOG"
+	    touch \$DOMAIN_HOME/lock_weblogic
+	    if [[ \$USER = \$DOMAIN_OWNER ]]; then
+		    mkdir -p \$DOMAIN_HOME/logs
+		    export JAVA_OPTIONS='-Djava.security.egd=file:/dev/./urandom -DUseSunHttpHandler=true'
+		    nohup sh \$DOMAIN_HOME/bin/startWebLogic.sh > \$DOMAIN_LOG 2>&1 &
+		else
+			su - \$DOMAIN_OWNER -c "mkdir -p \$DOMAIN_HOME/logs"
+		    su - \$DOMAIN_OWNER -c "export JAVA_OPTIONS='-Djava.security.egd=file:/dev/./urandom -DUseSunHttpHandler=true'"
+		    su - \$DOMAIN_OWNER -c "nohup sh \$DOMAIN_HOME/bin/startWebLogic.sh > \$DOMAIN_LOG 2>&1 &"
+		fi
+	    echo " OK"
+	    ;;
+	stop)
+	    echo -n "Shutdown Weblogic:"
+	    rm -rf \$DOMAIN_HOME/lock_weblogic
+	    if [[ \$USER = \$DOMAIN_OWNER ]]; then
+	    	sh \$DOMAIN_HOME/bin/stopWebLogic.sh >> \$DOMAIN_LOG
+	    else
+	    	su - \$DOMAIN_OWNER -c "sh \$DOMAIN_HOME/bin/stopWebLogic.sh >> \$DOMAIN_LOG"	
+	    fi
+	    
+	    PIDS=\$(ps -ax |grep "java.*weblogic"|grep -v "grep" |awk '{print \$1}')
+		for pid in \$PIDS  
+		do  
+	    	kill -9 \$pid 2>/dev/null
+		done
+	    echo " OK"
+	    ;;
+	reload|restart)
+	    $0 stop
+	    $0 start
+	    ;;
+	*)
+	    echo "Usage: `basename $0` start|restart|reload"
+	    exit 1
+	esac
+
+exit 0
+
+EOF
+				
+				site_home=/var/www/weblogic/localhost
+				if [[ -n "$host_name" ]]; then
+					site_home=/var/www/weblogic/$host_name
+				fi
+				app_name="default"
+				app_home=$site_home/$app_name
+
+				rm -rf $site_home;
+				mkdir -p $app_home/WEB-INF;
+
+				# 生成Hello world
+
+				cat >>$app_home/index.jsp<<EOF
+<%@ page language="java" import="java.util.*" pageEncoding="UTF-8"%>
+<%
+String path = request.getContextPath();
+String basePath = request.getScheme()+"://"+request.getServerName()+":"+request.getServerPort()+path+"/";
+%>
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Hello World</title>
+</head>
+
+<body>
+	<%
+    	out.println("Hello world!");
+    %>
+</body>
+</html>
+EOF
+				cat >>$app_home/WEB-INF/web.xml<<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://java.sun.com/xml/ns/javaee" xsi:schemaLocation="http://java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_2_5.xsd" id="WebApp_ID" version="2.5">
+  <display-name>$app_name</display-name>
+  <welcome-file-list>
+    <welcome-file>index.html</welcome-file>
+    <welcome-file>index.jsp</welcome-file>
+    <welcome-file>default.html</welcome-file>
+    <welcome-file>default.jsp</welcome-file>
+  </welcome-file-list>
+</web-app>
+EOF
+
+				deploy_target="AdminServer"
+				virtual_host=""
+
+				if [[ -n "$host_name" ]]; then
+					deploy_target="$deploy_target,$host_name"
+					tmpfile="/tmp/$RANDOM";
+					cat >>$tmpfile<<EOF
+  <virtual-host>
+    <name>$host_name</name>
+    <target>AdminServer</target>
+    <web-server-log>
+      <number-of-files-limited>false</number-of-files-limited>
+      <file-count>7</file-count>
+    </web-server-log>
+    <virtual-host-name>$host_name</virtual-host-name>
+  </virtual-host>
+EOF
+					sed -i "/<configuration-version>/r $tmpfile" $DOMAIN_HOME/config/config.xml;
+				fi
+
+				mkdir -p $site_home/.plan
+				cat >>$site_home/.plan/$app_name.xml<<EOF
+<?xml version='1.0' encoding='UTF-8'?>
+<deployment-plan xmlns="http://xmlns.oracle.com/weblogic/deployment-plan" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://xmlns.oracle.com/weblogic/deployment-plan http://xmlns.oracle.com/weblogic/deployment-plan/1.0/deployment-plan.xsd">
+  <application-name>localhost</application-name>
+  <module-override>
+    <module-name>default</module-name>
+    <module-type>war</module-type>
+    <module-descriptor external="true">
+      <root-element>weblogic-web-app</root-element>
+      <uri>WEB-INF/weblogic.xml</uri>
+    </module-descriptor>
+    <module-descriptor external="false">
+      <root-element>web-app</root-element>
+      <uri>WEB-INF/web.xml</uri>
+    </module-descriptor>
+  </module-override>
+  <config-root>$site_home/.plan</config-root>
+</deployment-plan>
+
+EOF
+				mkdir -p $site_home/.plan/WEB-INF
+				cat >>$site_home/.plan/WEB-INF/weblogic.xml<<EOF
+<?xml version='1.0' encoding='UTF-8'?>
+<weblogic-web-app xmlns="http://xmlns.oracle.com/weblogic/weblogic-web-app" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://xmlns.oracle.com/weblogic/weblogic-web-app http://xmlns.oracle.com/weblogic/weblogic-web-app/1.6/weblogic-web-app.xsd">
+  <session-descriptor></session-descriptor>
+  <jsp-descriptor></jsp-descriptor>
+  <container-descriptor></container-descriptor>
+  <context-root>/</context-root>
+</weblogic-web-app>
+EOF
+
+				
+
+				
+				chown -R weblogic:bea $site_home
+				chmod -R ug+rw $site_home
+
+				rm -rf /usr/lib/systemd/system/weblogic.service;
+			cat >>/usr/lib/systemd/system/weblogic.service<<EOF
+[Unit]
+Description=Weblogic Service
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=$DOMAIN_HOME/weblogic start
+ExecStop=$DOMAIN_HOME/weblogic stop
+User=weblogic
+Group=bea
+
+[Install]
+WantedBy=default.target
+
+EOF
+				chown -R weblogic:bea $DOMAIN_HOME
+				chmod -R ug+rwx $DOMAIN_HOME
+
+				# 添加防火墙
+				firewall-cmd --permanent --zone=public --add-port=7001/tcp;
+				firewall-cmd --permanent --zone=public --add-port=7002/tcp;
+				firewall-cmd --reload;
+				semanage port -a -t http_port_t -p tcp 7001;
+				semanage port -a -t http_port_t -p tcp 7002;
+
+				# 启动服务
+				systemctl daemon-reload;
+				systemctl enable weblogic.service;
+
+				systemctl restart weblogic.service;
+
+				# 等待服务器启动
+
+				sleep 10;
+
+				# 布署示例项目
+				# 参考https://docs.oracle.com/cd/E13222_01/wls/docs103/deployment/deploy.html
+				su - weblogic -c "java weblogic.Deployer -adminurl t3://localhost:7001 -username weblogic -password $weblogic_password -deploy -name $app_name -targets $deploy_target -source $app_home -stage -plan $site_home/.plan/$app_name.xml"
+
+				su - weblogic -c "java weblogic.Deployer -adminurl t3://localhost:7001 -user weblogic -password $weblogic_password -start -name $app_name"
+
+				o_weblogic_state=2;
+
+				echo "WebLogic installed success.";
+			else
+				echo "WebLogic installed failure.";
+			fi
+		else
+			echo "WebLogic installed failure.";
+		fi
 	fi
 }
 
