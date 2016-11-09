@@ -53,7 +53,7 @@ yum update -y;
 
 yum install -y epel-release;
 
-yum install -y gcc-c++ openssl-devel wget zip unzip expect;
+yum install -y gcc-c++ openssl-devel wget zip unzip expect net-tools;
 
 
 # 配置Java环境
@@ -190,6 +190,12 @@ function option_test()
 }
 
 
+# 获取网络信息
+eth=$(ip addr |grep '^[0-9]\+:[[:blank:]]\+[[:alnum:]]\+' |grep -v 'state DOWN' |grep -v 'pfifo_fast master br'|grep -v 'lo' |awk 'NR==1{gsub(":","");print $2}');
+serverip=$(ip addr show $eth|grep -w "inet" | grep -v "127.0.0.1" |awk 'NR==1{print substr($2,1,index($2,"/")-1)}');
+gateway=$(ip route list |grep "$eth" |grep -w "via" |awk 'NR==1{print $3}');
+netmask=$(ifconfig $eth |grep -w "netmask" |awk '{print $4}');
+hwaddr=$(ip addr show $eth |grep "link/ether" |awk '{print $2}');
 
 
 ############################# Define variables #############################
@@ -204,8 +210,7 @@ ssh_port='1036'
 
 # VPN
 o_vpn_state=$(option_test "vpn");
-serverip=$(ip addr|grep -w "inet" | grep -v "127.0.0.1" |awk 'NR==1{print substr($2,1,index($2,"/")-1)}');
-eth=$(ip addr |grep '^[0-9]\+:[[:blank:]]\+[[:alnum:]]\+' |grep -v 'lo' |awk 'NR==1{gsub(":","");print $2}');
+
 shared_secret="1ms.im";
 iprange="10.0.1";
 vpn_username="guoliang";
@@ -238,6 +243,8 @@ o_tomcat_state=$(option_test "tomcat");
 o_oracle_state=$(option_test "oracle");
 o_cobbler_state=$(option_test "cobbler");
 o_weblogic_state=$(option_test "weblogic");
+o_gitlab_state=$(option_test "gitlab");
+o_kvm_state=$(option_test "kvm");
 
 
 
@@ -291,6 +298,10 @@ function install()
 	install_cobbler;
 
 	install_weblogic12;
+
+	install_gitlab;
+
+	install_kvm;
 }
 
 function setup_selinux()
@@ -2485,6 +2496,221 @@ EOF
 		else
 			echo "WebLogic installed failure.";
 		fi
+	fi
+}
+
+function install_gitlab() 
+{
+	# http://blog.wengyingjian.com/2016/02/08/server-gitlab-init/
+	if [[ $o_gitlab_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "gitlab-runsvdir") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing Gitlab...";
+
+
+		yum install -y postfix
+		systemctl enable postfix
+		systemctl restart postfix
+		firewall-cmd --permanent --add-service=http
+		systemctl reload firewalld
+
+		curl -sS http://packages.gitlab.cc/install/gitlab-ce/script.rpm.sh | sudo bash
+		#curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.rpm.sh | sudo bash
+		#rm -rf /etc/yum.repos.d/gitlab-ce.repo
+		#cat >>/etc/yum.repos.d/gitlab-ce.repo<<EOF
+#[gitlab-ce]
+#name=gitlab-ce
+#baseurl=http://mirrors.tuna.tsinghua.edu.cn/gitlab-ce/yum/el7
+#repo_gpgcheck=0
+#gpgcheck=0
+#enabled=1
+#gpgkey=https://packages.gitlab.com/gpg.key
+#EOF
+#		sudo yum makecache
+
+		yum install -y gitlab-ce;
+		gitlab-ctl reconfigure;
+
+		sed -i "s/^[[:space:]]*listen[[:space:]]*80;/       listen       8000;/"  /opt/gitlab/embedded/conf/nginx.conf
+		sed -i "s/^external_url 'http:\/\/localhost'/external_url 'http:\/\/localhost:8000'/"  /etc/gitlab/gitlab.rb
+		sed -i "s/^[[:space:]]*port:[[:space:]]*80;/    port       8000;/"  /opt/gitlab/embedded/service/gitlab-rails/config/gitlab.yml
+
+		# 添加防火墙
+		firewall-cmd --permanent --zone=public --add-port=8000/tcp;
+		firewall-cmd --reload;
+		semanage port -a -t http_port_t -p tcp 8000;   
+
+		gitlab-ctl reconfigure;
+		systemctl restart gitlab-runsvdir.service
+
+		# 配置
+		# https://docs.gitlab.com/omnibus/README.html
+
+		# 备份还原 （备份和恢复文件都是git用户）
+		# /var/opt/gitlab/backups
+		# gitlab-rake gitlab:backup:create
+		# gitlab-rake gitlab:backup:restore
+		# gitlab-rake gitlab:backup:restore BACKUP=1393513186
+
+		o_gitlab_state=2;
+		echo "Gitlab installed success.";
+	fi
+}
+
+function install_vncserver()
+{
+	yum groupinstall -y "GNOME Desktop"
+	yum install -y tigervnc-server tigervnc-server-module tigervnc
+
+
+	cat >/etc/systemd/system/vncserver@:1.service<<EOF
+[Unit]
+Description=Remote desktop service (VNC)
+After=syslog.target network.target
+[Service]
+Type=forking
+User=root
+ExecStart=/usr/bin/vncserver :1 -geometry 1280x1024 -depth 16 -securitytypes=none -fp /usr/share/X11/fonts/misc
+ExecStop=/usr/bin/vncserver -kill :1
+[Install]
+WantedBy=multi-user.target
+EOF
+	
+	systemctl enable vncserver@:1.service
+
+}
+
+function install_kvm() 
+{
+	# 参考
+	# http://www.tuicool.com/articles/3YjEzm
+	# http://jensd.be/207/linux/install-and-use-centos-7-as-kvm-virtualization-host
+	# https://linux.dell.com/files/whitepapers/KVM_Virtualization_in_RHEL_7_Made_Easy.pdf
+	if [[ $o_kvm_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "kvm") -eq 0 ]]; then
+
+		clear;
+		echo "Start installing KVM...";
+
+		# 检测CPU是否支持
+		support_kvm=$(egrep 'vmx|svm'  /proc/cpuinfo);
+		if [[ -z "$support_kvm" ]]; then
+			echo "Your system does not support virtualization !";
+			exit 0;
+		fi
+		
+
+		# 安装组件
+		yum install -y kvm python-virtinst libvirt virt-install bridge-utils virt-manager qemu-kvm-tools  virt-viewer  virt-v2v libguestfs-tools 
+		systemctl enable libvirtd.service
+		systemctl restart libvirtd.service
+
+		# 创建网桥
+		if [ ! -f "/etc/sysconfig/network-scripts/ifcfg-br0" ]; then
+
+			bootproto=$(cat /etc/sysconfig/network-scripts/ifcfg-$eth |egrep  "^BOOTPROTO="|awk '{print substr($1,11)}' |sed 's/"//g');
+			uuid=$(cat /etc/sysconfig/network-scripts/ifcfg-$eth |egrep  "^UUID="|awk '{print substr($1,6)}' |sed 's/"//g');
+
+			rm -rf /etc/sysconfig/network-scripts/ifcfg-br0;
+			cat>>/etc/sysconfig/network-scripts/ifcfg-br0 <<EOF
+DEVICE=br0
+HWADDR=$hwaddr
+TYPE=Bridge
+ONBOOT=yes
+NM_CONTROLLED=no
+EOF
+			
+			if [[ -n "$uuid" ]]; then
+				echo "UUID=\"$uuid\"" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			fi
+
+			if [ "$bootproto" = "dhcp" ]; then
+
+				echo "BOOTPROTO=dhcp" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			else
+				cat >>/etc/sysconfig/network-scripts/ifcfg-br0 <<EOF
+BOOTPROTO=none
+IPADDR=$serverip
+NETMASK=$netmask
+GATEWAY=$gateway
+EOF
+			fi
+
+			sed -i "/^BRIDGE=/d" /etc/sysconfig/network-scripts/ifcfg-$eth;
+			sed -i "/^HWADDR=/d" /etc/sysconfig/network-scripts/ifcfg-$eth;
+			sed -i "/^DEVICE=/aHWADDR=$hwaddr" /etc/sysconfig/network-scripts/ifcfg-$eth;
+			sed -i "$ a BRIDGE=br0" /etc/sysconfig/network-scripts/ifcfg-$eth;
+
+			echo "/etc/sysconfig/network-scripts/ifcfg-$eth:"
+			cat /etc/sysconfig/network-scripts/ifcfg-$eth
+
+			echo "/etc/sysconfig/network-scripts/ifcfg-br0:"
+			cat /etc/sysconfig/network-scripts/ifcfg-br0
+			echo "Network bridge setup success."
+
+			need_boot="yes"
+			printf "Do you like to reboot your system,Yes or no [yes]:\n"	
+			read tmp;
+			if [[ -n "$tmp" ]]; then
+				need_boot="$tmp";
+			fi
+			
+			if [ $need_boot="yes" ]; then
+				reboot;
+			else
+				systemctl restart network.service;
+			fi
+		fi
+		
+		
+		# 允许网络请求转发
+		sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
+		sed -i "$ a net.ipv4.ip_forward = 1" /etc/sysctl.conf
+		sysctl -p /etc/sysctl.conf
+
+		# 创建虚拟机
+		mkdir -p /var/lib/libvirt/images
+		mkdir -p /data/iso
+
+		if [[ -f "CentOS-7-x86_64-DVD-1511.iso" ]]; then
+			mv CentOS-7-x86_64-DVD-1511.iso /data/iso
+		fi
+
+		# 添加防火墙
+		firewall-cmd --permanent --zone=public --add-port=5910/tcp;
+		firewall-cmd --reload;
+		semanage port -a -t vnc_port_t -p tcp 5910; 
+		setsebool -P virt_use_samba 1
+		setsebool -P virt_use_nfs 1
+		# semanage fcontext -l | grep virt_image_t
+		# semanage fcontext --add -t virt_image_t '/vm-images(/.*)?'
+		# restorecon -R -v /vm-images
+		# ls –aZ /vm-images
+
+		# virt-install --name=centos01 --ram 512 --vcpus=1 --disk path=/data/kvm/centos01.img,size=7,bus=virtio --accelerate --cdrom /root/CentOS-7-x86_64-DVD-1511.iso --vnc --vncport=5910 --vnclisten=0.0.0.0 --network bridge=br0,model=virtio
+		## virt-install --name=CentOS7-x86_64 ram=512 --vcpus=1 -f /home/kvm/ubuntu64.qcow2 --location /home/os --network bridge=br0 --extra-args='console=tty0 console=ttyS0,115200n8 serial' --force
+		virt-install --name=CentOS7-x86_64 --ram=512 --vcpus=1 --disk path=/var/lib/libvirt/images/CentOS7-x86_64.img,size=7,bus=virtio --accelerate --cdrom=/data/iso/CentOS-7-x86_64-DVD-1511.iso --graphics vnc,listen=0.0.0.0,port=5910,password=abcd1234 --network bridge=br0,model=virtio --os-type=linux --os-variant=rhel7
+
+		#virsh autostart CentOS7-x86_64
+		#virsh console CentOS7-x86_64
+
+		# virsh list --all
+		# virsh destroy CentOS7-x86_64  
+		# virsh undefine CentOS7-x86_64
+		# rm -rf /data/kvm/disk03.img
+		# 打开图形界面，在终端选择 kconsole ，并且打开 virt-manager 工具
+
+		# 还可以使用命令克隆：
+ 		# nohup virt-clone -o centos01 -n centos02 -f /data/kvm/centos02.img &
+ 		# virsh reboot CentOS7-x86_64 （重启）
+		# virsh start CentOS7-x86_64   （启动）
+		
+		# virsh
+		#    attach-disk CentOS7-x86_64 /data/iso/CentOS-7-x86_64-DVD-1511.iso hda --driver file --type cdrom --mode readonly
+
+		# virt-clone --connect qemu:///system --original CentOS7-x86_64 --name CentOS7-Web --file /data/kvm/CentOS7-Web.img
+
+		o_kvm_state=2;
+		echo "KVM installed success.";
 	fi
 }
 

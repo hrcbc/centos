@@ -1,0 +1,12 @@
+#!/usr/bin/expect -f
+
+
+set timeout -1
+
+spawn scp -P 1036  /Data/Project/Linux/centos.sh root@192.168.1.86:/root/ ;
+expect "*assword:*"
+
+send "abcd1234\r"
+
+expect eof
+
