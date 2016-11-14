@@ -21,6 +21,8 @@ USAGE="
  	--http-proxy-tomcat     When the value is 1, set the HTTP reverse proxy to Tomcat,default 1
  	--oracle-password   	Specify the super user‘s password
  	--weblogic-password		Specify the Weblogic console user‘s password
+ 	--gitlab-port 			Define gitlab visit port,default 80
+ 	--mysql-password		Specify mysql root user's password
 ";
 
 
@@ -56,13 +58,14 @@ yum install -y epel-release;
 yum install -y gcc-c++ openssl-devel wget zip unzip expect net-tools;
 
 
+
 # 配置Java环境
 
 if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java version \"1.8" | wc -l) -eq 0 ]]; then
 	 #wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
-	 #if [[ ! -f "jdk-8u102-linux-x64.tar.gz" ]]; then
-	 #	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u102-linux-x64.tar.gz
-	 #fi
+	 if [[ ! -f "jdk-8u102-linux-x64.tar.gz" ]]; then
+	 	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u102-linux-x64.tar.gz
+	 fi
 
 	 # wget --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.rpm
 
@@ -75,15 +78,16 @@ if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java 
 	# curl can be used in place of wget.
 
 
-	#tar xzvf ./jdk-8u102-linux-x64.tar.gz -C /var/local;
+	tar xzvf ./jdk-8u102-linux-x64.tar.gz -C /var/local;
 
-	#ln -s /var/local/jdk1.8.0_102 /var/local/jdk;
+	ln -s /var/local/jdk1.8.0_102 /var/local/jdk;
 
 	#rm -rf ./jdk-8u102-linux-x64.tar.gz;
 
-	yum -y install java-1.8.0-openjdk*
+	#yum -y install java-1.8.0-openjdk*
 
-	export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk;
+	#export JAVA_HOME=/usr/lib/jvm/java-1.8.0-openjdk;
+	export JAVA_HOME=/var/local/jdk;
 	export JRE_HOME=$JAVA_HOME/jre;
 	export CLASS_PATH=.:$JAVA_HOME/lib;
 	export PATH=$PATH:$JAVA_HOME/bin;
@@ -91,7 +95,8 @@ if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java 
 	sed -i '/export CLASS_PATH=.*/d' /etc/profile
 	sed -i '/export JRE_HOME=.*/d' /etc/profile
 	sed -i '/export PATH=\$PATH:\$JAVA_HOME\/bin/d' /etc/profile
-	sed -i '$ a export JAVA_HOME=\/usr\/lib\/jvm\/java-1.8.0-openjdk' /etc/profile
+	sed -i '$ a export JAVA_HOME=\/var\/local\/jdk' /etc/profile
+	#sed -i '$ a export JAVA_HOME=\/usr\/lib\/jvm\/java-1.8.0-openjdk' /etc/profile
 	sed -i '$ a export JRE_HOME=\$JAVA_HOME\/jre' /etc/profile
 	sed -i '$ a export CLASS_PATH=\.\:\$JAVA_HOME\/lib' /etc/profile
 	sed -i '$ a export PATH=\$PATH:\$JAVA_HOME\/bin' /etc/profile
@@ -115,7 +120,18 @@ oracle_password="";
 # Weblogic 
 weblogic_password="abcd1234"
 
-ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password: -- "$@"`
+# Gitlab
+gitlab_port="80"
+
+# FTP
+mysql_vsftpd_password=$(cat /dev/urandom | head -n 10 | md5sum | head -c 10);
+ftp_username='hrcbc';
+ftp_password='guoliang.xie';
+
+# Mysql
+mysql_root_password='guoliang.xie'
+
+ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -155,6 +171,14 @@ do
 
 		--oracle-sid)
 			oracle-sid="$2";
+			shift 2;;
+
+		--gitlab-port)
+			gitlab_port="$2";
+			shift 2;;
+
+		--mysql-password)
+			mysql_root_password="$2";
 			shift 2;;
 
 		--)
@@ -200,9 +224,7 @@ hwaddr=$(ip addr show $eth |grep "link/ether" |awk '{print $2}');
 
 ############################# Define variables #############################
 
-# Mysql
-o_mysql_state=$(option_test "mysql");
-mysql_root_password='guoliang.xie'
+
 
 # SSH
 ssh_port='1036'
@@ -216,11 +238,7 @@ iprange="10.0.1";
 vpn_username="guoliang";
 vpn_password="xgl.1234";
 
-# FTP
-o_ftp_state=$(option_test "ftp");
-mysql_vsftpd_password=$(cat /dev/urandom | head -n 10 | md5sum | head -c 10);
-ftp_username='hrcbc';
-ftp_password='guoliang.xie';
+
 
 # HTTP
 
@@ -228,7 +246,7 @@ ftp_password='guoliang.xie';
 
 # SVN
 if [[ ! -f "sha1.jar" ]]; then
-	wget -c https://raw.githubusercontent.com/hrcbc/centos/master/sha1.jar
+	wget -c http://home.guoliang.info/Tools/Scripts/Linux/sha1.jar
 fi
 
 mysql_svn_password=$(cat /dev/urandom | head -n 10 | md5sum | head -c 10);
@@ -237,6 +255,8 @@ svn_password=$(java -jar ./sha1.jar xgl.1234);
 svn_dbname="svnserver";
 svn_dbuser="svn";
 
+o_mysql_state=$(option_test "mysql");
+o_ftp_state=$(option_test "ftp");
 o_http_state=$(option_test "http");
 o_svn_state=$(option_test "svn");
 o_tomcat_state=$(option_test "tomcat");
@@ -276,6 +296,8 @@ function input_oracle_password() {
 function install()
 {
 	
+	sync_time;
+
 	setup_selinux;
 
 	change_sshd_port;
@@ -302,6 +324,17 @@ function install()
 	install_gitlab;
 
 	install_kvm;
+}
+
+function sync_time()
+{
+	if [[ $(service_test "chronyd") -eq 0 ]]; then
+		yum install -y chrony;
+		timedatectl set-timezone Asia/Shanghai 
+		timedatectl set-local-rtc 1
+		systemctl enable chronyd
+		systemctl start chronyd
+	fi
 }
 
 function setup_selinux()
@@ -718,7 +751,9 @@ function install_ftp()
 		echo "Instal vsftpd...";
 	
 		yum install -y vsftpd ftp;	
-		wget -N https://raw.githubusercontent.com/hrcbc/centos/master/pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
+		if[[ ! -f "pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm"  ]]; then
+			wget -N https://raw.githubusercontent.com/hrcbc/centos/master/pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
+		fi
 		rpm -ivh pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
 
 		rm -rf pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
@@ -896,6 +931,13 @@ EOF
 		firewall-cmd --permanent --zone=public --add-service=https
 		firewall-cmd --reload
 
+		setsebool -P allow_httpd_anon_write=1
+  		setsebool -P allow_httpd_sys__anon_write=1
+  		setsebool -P httpd_enable_cgi 1
+  		setsebool -P httpd_enable_homedirs 1
+  		setsebool -P httpd_tty_comm 1
+  		setsebool -P httpd_unified 0
+  		setsebool -P httpd_can_network_connect 1
 
 		# 启动服务
 		systemctl enable httpd.service;
@@ -1011,17 +1053,17 @@ function install_tomcat()
 		input_host_name;
 
 		# 下载解压文件
-		if [[ ! -f "apache-tomcat-8.5.5.tar.gz" ]]; then
-			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.5/bin/apache-tomcat-8.5.5.tar.gz;	
+		if [[ ! -f "apache-tomcat-8.5.8.tar.gz" ]]; then
+			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.8/bin/apache-tomcat-8.5.8.tar.gz;	
 		fi
 		
-		rm -rf /var/local/apache-tomcat-8.5.5;
+		rm -rf /var/local/apache-tomcat-8.5.8;
 		rm -rf /var/local/tomcat;
 
-		tar xzvf ./apache-tomcat-8.5.5.tar.gz -C /var/local;
-		ln -s /var/local/apache-tomcat-8.5.5 /var/local/tomcat;
+		tar xzvf ./apache-tomcat-8.5.8.tar.gz -C /var/local;
+		ln -s /var/local/apache-tomcat-8.5.8 /var/local/tomcat;
 
-		rm -rf ./apache-tomcat-8.5.5.tar.gz;
+		#rm -rf ./apache-tomcat-8.5.8.tar.gz;
 
 		# 添加防火墙
 		firewall-cmd --permanent --zone=public --add-port=8080/tcp;
@@ -1044,8 +1086,8 @@ function install_tomcat()
 		getent group tomcat || groupadd -r tomcat;
 		getent passwd tomcat || useradd -r -d $TOMCAT_HOME -s /bin/nologin -g tomcat tomcat;
 		chown -R tomcat:tomcat $TOMCAT_HOME;
-		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.5;
-		chmod -R ug+rwx /var/local/apache-tomcat-8.5.5;
+		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.8;
+		chmod -R ug+rwx /var/local/apache-tomcat-8.5.8;
 
 
 		cat >>$TOMCAT_HOME/bin/setenv.sh<<EOF
@@ -1688,7 +1730,7 @@ EOF
 
 		if [[ -n "$logfile" ]]; then
 			INSTALL_LOG=$(expect -c "
-				set timeout -1
+				set timeout 600
 				spawn tail -f "$logfile"
 				expect \"Shutdown Oracle Database 11g Release 2 Installer\"
 				expect eof
@@ -1888,6 +1930,8 @@ EOF
 			systemctl enable oracledb.service;
 
 			chmod 777 /var/tmp/.oracle
+
+			#emca -config dbcontrol db
 
 			systemctl restart oracledb.service;
 
@@ -2465,7 +2509,7 @@ EOF
 				chmod -R ug+rwx $DOMAIN_HOME
 
 				# 添加防火墙
-				firewall-cmd --permanent --zone=public --add-port=7001/tcp;
+				firewall-cmd --permanent --zone=public --add-port=7001/tcp;	
 				firewall-cmd --permanent --zone=public --add-port=7002/tcp;
 				firewall-cmd --reload;
 				semanage port -a -t http_port_t -p tcp 7001;
@@ -2531,15 +2575,17 @@ function install_gitlab()
 		yum install -y gitlab-ce;
 		gitlab-ctl reconfigure;
 
-		sed -i "s/^[[:space:]]*listen[[:space:]]*80;/       listen       8000;/"  /opt/gitlab/embedded/conf/nginx.conf
-		sed -i "s/^external_url 'http:\/\/localhost'/external_url 'http:\/\/localhost:8000'/"  /etc/gitlab/gitlab.rb
-		sed -i "s/^[[:space:]]*port:[[:space:]]*80;/    port       8000;/"  /opt/gitlab/embedded/service/gitlab-rails/config/gitlab.yml
+		if [ "$gitlab_port"!="80" ]; then
+			sed -i "s/^[[:space:]]*listen[[:space:]]*80;/       listen       $gitlab_port;/"  /opt/gitlab/embedded/conf/nginx.conf
+			sed -i "s/^external_url 'http:\/\/localhost'/external_url 'http:\/\/localhost:$gitlab_port'/"  /etc/gitlab/gitlab.rb
+			sed -i "s/^[[:space:]]*port:[[:space:]]*80;/    port       $gitlab_port;/"  /opt/gitlab/embedded/service/gitlab-rails/config/gitlab.yml
+			# 添加防火墙
+			firewall-cmd --permanent --zone=public --add-port=$gitlab_port/tcp;
+			firewall-cmd --reload;
+			semanage port -a -t http_port_t -p tcp $gitlab_port;
+		fi
 
-		# 添加防火墙
-		firewall-cmd --permanent --zone=public --add-port=8000/tcp;
-		firewall-cmd --reload;
-		semanage port -a -t http_port_t -p tcp 8000;   
-
+		
 		gitlab-ctl reconfigure;
 		systemctl restart gitlab-runsvdir.service
 
@@ -2586,7 +2632,7 @@ function install_kvm()
 	# http://www.tuicool.com/articles/3YjEzm
 	# http://jensd.be/207/linux/install-and-use-centos-7-as-kvm-virtualization-host
 	# https://linux.dell.com/files/whitepapers/KVM_Virtualization_in_RHEL_7_Made_Easy.pdf
-	if [[ $o_kvm_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "kvm") -eq 0 ]]; then
+	if [[ $o_kvm_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "libvirtd") -eq 0 ]]; then
 
 		clear;
 		echo "Start installing KVM...";
@@ -2609,11 +2655,11 @@ function install_kvm()
 
 			bootproto=$(cat /etc/sysconfig/network-scripts/ifcfg-$eth |egrep  "^BOOTPROTO="|awk '{print substr($1,11)}' |sed 's/"//g');
 			uuid=$(cat /etc/sysconfig/network-scripts/ifcfg-$eth |egrep  "^UUID="|awk '{print substr($1,6)}' |sed 's/"//g');
+			macaddr=$(cat /etc/sysconfig/network-scripts/ifcfg-$eth |egrep  "^HWADDR="|awk '{print substr($1,6)}' |sed 's/"//g');
 
 			rm -rf /etc/sysconfig/network-scripts/ifcfg-br0;
 			cat>>/etc/sysconfig/network-scripts/ifcfg-br0 <<EOF
 DEVICE=br0
-HWADDR=$hwaddr
 TYPE=Bridge
 ONBOOT=yes
 NM_CONTROLLED=no
@@ -2623,21 +2669,25 @@ EOF
 				echo "UUID=\"$uuid\"" >> /etc/sysconfig/network-scripts/ifcfg-br0 
 			fi
 
-			if [ "$bootproto" = "dhcp" ]; then
+			if [[ -n "$macaddr" ]]; then	
+				echo "HWADDR=$macaddr" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			fi
 
-				echo "BOOTPROTO=dhcp" >> /etc/sysconfig/network-scripts/ifcfg-br0 
-			else
+			#if [ "$bootproto" = "dhcp" ]; then
+
+			#	echo "BOOTPROTO=dhcp" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			#else
 				cat >>/etc/sysconfig/network-scripts/ifcfg-br0 <<EOF
 BOOTPROTO=none
 IPADDR=$serverip
 NETMASK=$netmask
 GATEWAY=$gateway
 EOF
-			fi
+			#fi
 
 			sed -i "/^BRIDGE=/d" /etc/sysconfig/network-scripts/ifcfg-$eth;
-			sed -i "/^HWADDR=/d" /etc/sysconfig/network-scripts/ifcfg-$eth;
-			sed -i "/^DEVICE=/aHWADDR=$hwaddr" /etc/sysconfig/network-scripts/ifcfg-$eth;
+			#sed -i "/^HWADDR=/d" /etc/sysconfig/network-scripts/ifcfg-$eth;
+			#sed -i "/^DEVICE=/aHWADDR=$macaddr" /etc/sysconfig/network-scripts/ifcfg-$eth;
 			sed -i "$ a BRIDGE=br0" /etc/sysconfig/network-scripts/ifcfg-$eth;
 
 			echo "/etc/sysconfig/network-scripts/ifcfg-$eth:"
@@ -2648,7 +2698,7 @@ EOF
 			echo "Network bridge setup success."
 
 			need_boot="yes"
-			printf "Do you like to reboot your system,Yes or no [yes]:\n"	
+			printf "Do you like to reboot your system,Yes or no:[yes]\n"	
 			read tmp;
 			if [[ -n "$tmp" ]]; then
 				need_boot="$tmp";
@@ -2676,9 +2726,11 @@ EOF
 		fi
 
 		# 添加防火墙
-		firewall-cmd --permanent --zone=public --add-port=5910/tcp;
+		vncport=25910
+		vncpass='qingfeng***2016'
+		firewall-cmd --permanent --zone=public --add-port=$vncport/tcp;
 		firewall-cmd --reload;
-		semanage port -a -t vnc_port_t -p tcp 5910; 
+		semanage port -a -t vnc_port_t -p tcp $vncport; 
 		setsebool -P virt_use_samba 1
 		setsebool -P virt_use_nfs 1
 		# semanage fcontext -l | grep virt_image_t
@@ -2688,7 +2740,9 @@ EOF
 
 		# virt-install --name=centos01 --ram 512 --vcpus=1 --disk path=/data/kvm/centos01.img,size=7,bus=virtio --accelerate --cdrom /root/CentOS-7-x86_64-DVD-1511.iso --vnc --vncport=5910 --vnclisten=0.0.0.0 --network bridge=br0,model=virtio
 		## virt-install --name=CentOS7-x86_64 ram=512 --vcpus=1 -f /home/kvm/ubuntu64.qcow2 --location /home/os --network bridge=br0 --extra-args='console=tty0 console=ttyS0,115200n8 serial' --force
-		virt-install --name=CentOS7-x86_64 --ram=512 --vcpus=1 --disk path=/var/lib/libvirt/images/CentOS7-x86_64.img,size=7,bus=virtio --accelerate --cdrom=/data/iso/CentOS-7-x86_64-DVD-1511.iso --graphics vnc,listen=0.0.0.0,port=5910,password=abcd1234 --network bridge=br0,model=virtio --os-type=linux --os-variant=rhel7
+		virt-install --name=CentOS7-x86_64 --ram=4096 --vcpus=4 --disk path=/var/lib/libvirt/images/CentOS7-x86_64.img,size=120,bus=virtio --accelerate --cdrom=/data/iso/CentOS-7-x86_64-DVD-1511.iso --graphics vnc,listen=0.0.0.0,port=$vncport,password=$vncpass --network bridge=br0,model=virtio --network network=default  --os-type=linux --os-variant=rhel7
+
+		#virt-install --name=default --ram=4096 --vcpus=2 --disk path=/var/lib/libvirt/images/default.img,size=120,bus=virtio --accelerate --cdrom=/data/iso/CentOS-7-x86_64-DVD-1511.iso --graphics vnc,listen=0.0.0.0,port=$vncport,password=$vncpass --network bridge=br0,model=virtio --network network=default  --os-type=linux --os-variant=rhel7
 
 		#virsh autostart CentOS7-x86_64
 		#virsh console CentOS7-x86_64
@@ -2703,11 +2757,27 @@ EOF
  		# nohup virt-clone -o centos01 -n centos02 -f /data/kvm/centos02.img &
  		# virsh reboot CentOS7-x86_64 （重启）
 		# virsh start CentOS7-x86_64   （启动）
+		# virsh suspend CentOS7-x86_64  挂起
 		
 		# virsh
 		#    attach-disk CentOS7-x86_64 /data/iso/CentOS-7-x86_64-DVD-1511.iso hda --driver file --type cdrom --mode readonly
 
 		# virt-clone --connect qemu:///system --original CentOS7-x86_64 --name CentOS7-Web --file /data/kvm/CentOS7-Web.img
+
+		# 网络配置
+		# virsh net-dumpxml default   # 查看默认的网络配置
+		# virsh net-edit default      # 编辑
+		# virsh net-destroy default   # 关闭
+		# virsh net-start default     # 重启
+
+		# virsh snapshot-list test-server
+		# virsh snapshot-create-as test-server test-server-installed
+		# virsh snapshot-revert test-server test-server-installed
+		# virsh snapshot-delete test-server test-server-installed
+
+		#  qemu-img resize /var/lib/libvirt/images/pgj-test.img +50G
+
+		# grubby --update-kernel=ALL --args="console=ttyS0"
 
 		o_kvm_state=2;
 		echo "KVM installed success.";
