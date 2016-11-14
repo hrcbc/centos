@@ -109,6 +109,10 @@ fi
 action='';
 options='';
 
+
+# SSH
+ssh_port='1036'
+
 # 域名
 host_name=""
 
@@ -132,7 +136,7 @@ ftp_password='guoliang.xie';
 # Mysql
 mysql_root_password='guoliang.xie'
 
-ARGS=`getopt -o i -u -al install:,stop:,start:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
+ARGS=`getopt -o i -u -al install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -153,6 +157,10 @@ do
 			action="$1";
 			action=${action:2};			
 			shift;;
+
+		--ssh-port)
+			ssh_port="$2";
+			shift 2;;
 
 		--host-name)
 			host_name="$2";
@@ -224,12 +232,6 @@ hwaddr=$(ip addr show $eth |grep "link/ether" |awk '{print $2}');
 
 
 ############################# Define variables #############################
-
-
-
-# SSH
-ssh_port='1036'
-
 
 # VPN
 o_vpn_state=$(option_test "vpn");
@@ -357,7 +359,7 @@ function setup_selinux()
 
 function change_sshd_port()
 {	
-	if [[ $(grep "^Port 1036" /etc/ssh/sshd_config | wc -l) -eq 0 ]]; then
+	if [[ $(grep "^Port $ssh_port" /etc/ssh/sshd_config | wc -l) -eq 0 ]]; then
 		echo "Change ssh port to : $ssh_port"
 	
 		# Add selinux port
@@ -369,7 +371,7 @@ function change_sshd_port()
 		firewall-cmd --reload;
 
 		# Change ssh port to 1036
-		sed -i "s/^#*Port 22/Port $ssh_port/" /etc/ssh/sshd_config
+		sed -i "s/^#*Port[[:space:]]*[[:digit:]]*/Port $ssh_port/" /etc/ssh/sshd_config
 
 		systemctl restart sshd.service;
 	fi
@@ -832,6 +834,10 @@ anon_other_write_enable=YES
 local_root=/
 EOF
 	
+
+		sed -i "/mkdir -p \/var\/run\/vsftpd/d" /etc/rc.local
+		sed -i "$ a mkdir -p \/var\/run\/vsftpd"  /etc/rc.local
+
 		# 设置Selinux权限
 		setsebool -P ftpd_connect_db 1;
 		setsebool -P ftp_home_dir 1;
@@ -2295,7 +2301,7 @@ EOF
 		echo "Weblogic installing,Please wait..."
 
 		RUN_INSTALL=$(expect -c "
-			set timeout -1;
+			set timeout 600;
 			spawn su - weblogic -c \"java -jar -d64 /stage/wls12c/fmw_12.2.1.2.0_wls_quick.jar -silent -invPtrLoc /stage/wls12c/oraInst.loc -responseFile /stage/wls12c/wls.resp ORACLE_HOME=$MW_HOME\"
 			expect \"The installation of Oracle Fusion Middleware 12c WebLogic and Coherence Developer 12.2.1.2.0 completed successfully\"
 			expect eof
@@ -2309,7 +2315,7 @@ EOF
 			echo "Creating domain,Please wait..."
 
 			RUN_INSTALL=$(expect -c "
-				set timeout -1;
+				set timeout 1200;
 				spawn su - weblogic -c \"$MW_HOME/oracle_common/common/bin/config.sh -mode=silent -silent_script=/stage/wls12c/create_domain.rsp -logfile=/var/log/create_domain.log\"
 				expect \"succeed: close template\"
 				expect eof
@@ -2373,8 +2379,8 @@ case "\$1" in
 	    echo " OK"
 	    ;;
 	reload|restart)
-	    $0 stop
-	    $0 start
+	    \$0 stop
+	    \$0 start
 	    ;;
 	*)
 	    echo "Usage: `basename $0` start|restart|reload"
@@ -2783,6 +2789,7 @@ EOF
 		echo "KVM installed success.";
 	fi
 }
+
 
 case $action in
 	install)
