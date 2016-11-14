@@ -22,6 +22,7 @@ do
 
 		--clone)
 			action="$1";
+			action=${action:2};
 			shift;;
 
 		--)

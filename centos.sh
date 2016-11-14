@@ -57,6 +57,7 @@ yum install -y epel-release;
 
 yum install -y gcc-c++ openssl-devel wget zip unzip expect net-tools;
 
+source /etc/profile
 
 
 # 配置Java环境
@@ -193,9 +194,9 @@ done
 
 
 if [ -n $options ]; then
-        options=${options/+/|+};
-        options=${options/-/|-};
-        options=${options/,/|,};
+        options=${options//+/|+};
+        options=${options//-/|-};
+        options=${options//,/|,};
 else    
         options="all";
 fi
@@ -751,7 +752,7 @@ function install_ftp()
 		echo "Instal vsftpd...";
 	
 		yum install -y vsftpd ftp;	
-		if[[ ! -f "pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm"  ]]; then
+		if [[ ! -f "pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm"  ]]; then
 			wget -N https://raw.githubusercontent.com/hrcbc/centos/master/pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
 		fi
 		rpm -ivh pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
@@ -921,7 +922,7 @@ EOF
 ?>
 EOF
 
-		mkdir -p site_dir/downloads;
+		mkdir -p $site_dir/downloads;
 		echo "test" > $site_dir/downloads/test.txt;
 
 		setenforce 0;
@@ -932,7 +933,6 @@ EOF
 		firewall-cmd --reload
 
 		setsebool -P allow_httpd_anon_write=1
-  		setsebool -P allow_httpd_sys__anon_write=1
   		setsebool -P httpd_enable_cgi 1
   		setsebool -P httpd_enable_homedirs 1
   		setsebool -P httpd_tty_comm 1
