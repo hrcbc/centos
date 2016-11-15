@@ -16,13 +16,16 @@ USAGE="
  	This script is used for install server componect.
 
  OPTIONS
- 	--install    		    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat,oracle,cobbler
+ 	--install    		    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat,oracle,weblogic,cobbler,kvm
+    --config-route
  	--host-name  		    Domain name for the host.
  	--http-proxy-tomcat     When the value is 1, set the HTTP reverse proxy to Tomcat,default 1
  	--oracle-password   	Specify the super user‘s password
  	--weblogic-password		Specify the Weblogic console user‘s password
  	--gitlab-port 			Define gitlab visit port,default 80
  	--mysql-password		Specify mysql root user's password
+ 	--config-route			Automatically configure the  IP routing for multi network interfaces 
+ 	--nat-forward			Configure nat port forwarding
 ";
 
 
@@ -136,7 +139,7 @@ ftp_password='guoliang.xie';
 # Mysql
 mysql_root_password='guoliang.xie'
 
-ARGS=`getopt -o i -u -al install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
+ARGS=`getopt -o i -u -al config-route,nat-forward:,install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -147,6 +150,15 @@ do
 			action=${action:2};
 			options="$2";
 			shift 2;;
+
+		--config-route)
+			action="config-route";
+			shift;;
+
+		--nat-forward)
+			action="nat-forward";
+			options="$2";
+			shift;;
 
 		--stop)
 			action="$1";
@@ -2790,8 +2802,170 @@ EOF
 	fi
 }
 
+function mask_to_prefix() 
+{  
+	yum install -y bc > /dev/null 2>&1;
+    mask=${1}  
+	prefix_cnt=0  
+	prefix=""  
+	local mask_list=($(echo ${mask} | awk -F . '{print $1,$2,$3,$4}')) 
+    local mask_cnt=${#mask_list[*]}  
+    mask_cnt=$((${mask_cnt} - 1))  
+    for i in `seq 0 ${mask_cnt}`  
+    do  
+            tmp=$(echo "obase=2;ibase=10;${mask_list[$i]}" | bc)  
+            prefix="${prefix}${tmp}"  
+    done  
+    prefix_cnt=$(echo ${prefix} | grep -o 1 | wc -l)  
+    echo $prefix_cnt
+}
+
+function config_route()
+{
+	if [[ $(service_test "config-route") -eq 0 ]]; then
+		clear;
+		local tmpfile=/tmp/$RANDOM;
+		local cmd="";
+		rm -rf $tmpfile;
+		echo "Config route for multi  network interfaces."
+		ip=$(ip a|grep "inet " |grep -v "127.0.0.1"|awk '{print substr($2,1,index($2,"/")-1)","$NF}')
+		index=1
+		for i in $ip
+		do
+			local ipaddr=${i/,*/}
+			local eth=${i/*,/}
+			local gateway=$(ip route list |grep "$eth" |grep -w "via" |awk 'NR==1{print $3}');
+			local netmask=$(ifconfig $eth |grep -w "netmask" |awk '{print $4}');
+			local prefix=$(mask_to_prefix $netmask);
+			local preip=$(echo $ipaddr | awk -F . '{print $1"."$2"."$3}');
+			local priority=$index"00"
+
+			#echo "ipaddr:$ipaddr, eth:$eth, gateway:$gateway, netmask:$netmask, prefix:$prefix, preip:$preip";
+
+
+			echo "echo \"$preip.0/$prefix dev $eth tab $index\" > /etc/sysconfig/network-scripts/route-$eth" >> $tmpfile
+			echo "echo \"default via $gateway dev $eth tab $index\" >> /etc/sysconfig/network-scripts/route-$eth" >> $tmpfile
+			echo "echo \"from $ipaddr/32 tab $index priority $priority\" > /etc/sysconfig/network-scripts/rule-$eth" >> $tmpfile
+
+			cmd="$cmd\nip route add $preip.0/$prefix dev $eth tab $index"
+			cmd="$cmd\nip route add default via $gateway dev $eth tab $index"
+			cmd="$cmd\nip rule add from $ipaddr/32 tab $index priority $priority"
+			let "index=$index+1"
+	    done
+	    echo -e $cmd >> $tmpfile;
+
+	    #echo "The config file is $tmpfile"
+	    #chmod ug+x $tmpfile;
+	    #cat $tmpfile;
+
+	    # 生成服务
+	    echo -e "#!/bin/bash\n$cmd" > /etc/config-route.sh
+	    chmod ug+x /etc/config-route.sh
+
+		rm -rf /usr/lib/systemd/system/config-route.service;
+		cat >>/usr/lib/systemd/system/config-route.service<<EOF
+[Unit]
+Description=Config Route Service
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/config-route.sh start
+ExecStop=/etc/config-route.sh stop
+User=root
+Group=root
+
+[Install]
+WantedBy=default.target
+
+EOF
+		# 启动服务
+		systemctl daemon-reload;
+		systemctl enable config-route.service;
+	    
+		echo "Config route for server success."
+	fi
+}
+
+function nat-forward() 
+{
+	if [[ $(service_test "config-route") -eq 0 ]]; then
+		rm -rf /etc/nat-forward.sh
+		cat >>/etc/nat-forward.sh<<EOF
+#!/bin/bash
+
+firewall-cmd --add-masquerade
+
+file="/etc/sysconfig/nat-tables"
+
+if [[ ! -f "\$file" ]]; then
+    echo "Can't find config file!"
+    exit
+fi
+
+cat \$file | while read line
+do
+    from=\$(echo \$line|awk '{print \$1}')
+    to=\$(echo \$line|awk '{print \$2}')
+
+    from_ip=\${from/:*/}
+    from_port=\${from/*:/}
+
+    to_ip=\${to/:*/}
+    to_port=\${to/*:/}
+
+    #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"    
+
+    iptables -t nat -A PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
+    iptables -I FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT
+done
+echo "OK"
+EOF
+		chmod ug+x /etc/nat-forward.sh
+
+		rm -rf /usr/lib/systemd/system/nat-forward.service;
+		cat >>/usr/lib/systemd/system/nat-forward.service<<EOF
+[Unit]
+Description=Config Nat Forward
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/nat-forward.sh start
+ExecStop=/etc/nat-forward.sh stop
+User=root
+Group=root
+
+[Install]
+WantedBy=default.target
+
+EOF
+		systemctl enable nat-forward.service;
+	fi
+
+	from=$(echo $options |awk -F - '{print $1}')
+	to=$(echo $options |awk -F - '{print $2}') 
+	if [[ $(echo $from |grep ":" |wc -l) -eq 0 ]]; then
+		from="$ip:$from"
+	fi
+	
+	local file="/etc/sysconfig/nat-tables"
+	if [[ -f "$file" ]]; then
+		sed -i "/$from.*/d" $file
+	fi
+	echo "$from $to" >> $file
+
+	sh /etc/nat-forward.sh
+}
+
 
 case $action in
 	install)
 		install;;
+
+	config-route)
+		config_route;;
+
+	nat-forward)
+        nat-forward;;
 esac
