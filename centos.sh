@@ -26,6 +26,7 @@ USAGE="
  	--mysql-password		Specify mysql root user's password
  	--config-route			Automatically configure the  IP routing for multi network interfaces 
  	--nat-forward			Configure nat port forwarding
+ 	--skip-update
 ";
 
 
@@ -54,8 +55,9 @@ function command_test()
 
 # 安装系统必备
 
-yum update -y;
-
+if [[ $(echo $* |grep "skip-update" |wc -l) -eq 0 ]]; then
+	yum update -y;
+fi
 yum install -y epel-release;
 
 yum install -y gcc-c++ openssl-devel wget zip unzip expect net-tools;
@@ -65,7 +67,7 @@ source /etc/profile
 
 # 配置Java环境
 
-if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "java version \"1.8" | wc -l) -eq 0 ]]; then
+if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "1.8" | wc -l) -eq 0 ]]; then
 	 #wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
 	 if [[ ! -f "jdk-8u102-linux-x64.tar.gz" ]]; then
 	 	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u102-linux-x64.tar.gz
@@ -139,7 +141,7 @@ ftp_password='guoliang.xie';
 # Mysql
 mysql_root_password='guoliang.xie'
 
-ARGS=`getopt -o i -u -al config-route,nat-forward:,install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
+ARGS=`getopt -o i -u -al skip-update,config-route,nat-forward:,install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -158,7 +160,7 @@ do
 		--nat-forward)
 			action="nat-forward";
 			options="$2";
-			shift;;
+			shift 2;;
 
 		--stop)
 			action="$1";
@@ -202,25 +204,30 @@ do
 			mysql_root_password="$2";
 			shift 2;;
 
+		--skip-update)
+			shift;;
+
 		--)
 			break;;
 
 		*)
-			#echo "$1 is not option";
-			echo $USAGE;
+			echo "unrecognized option '$1'";
+			echo "$USAGE";
 			break;;
 	esac
 done
 
-
-if [ -n $options ]; then
+if [[ $action == "install" ]]; then
+	if [ -n $options ]; then
         options=${options//+/|+};
         options=${options//-/|-};
         options=${options//,/|,};
-else    
+	else    
         options="all";
+	fi
+
+	options="|$options|";
 fi
-options="|$options|";
 
 # 选项检测
 function option_test()
@@ -822,6 +829,7 @@ guest_username=vsftpd
 #local_root=/home/vsftpd/$USER
 #user_sub_token=$USER
 virtual_use_local_privs=YES
+pasv_promiscuous=YES
 user_config_dir=/etc/vsftpd/vsftpd_user_conf
 EOF
 	
@@ -2889,7 +2897,7 @@ EOF
 
 function nat-forward() 
 {
-	if [[ $(service_test "config-route") -eq 0 ]]; then
+	if [[ $(service_test "nat-forwardcd") -eq 0 ]]; then
 		rm -rf /etc/nat-forward.sh
 		cat >>/etc/nat-forward.sh<<EOF
 #!/bin/bash
@@ -2905,19 +2913,32 @@ fi
 
 cat \$file | while read line
 do
-    from=\$(echo \$line|awk '{print \$1}')
-    to=\$(echo \$line|awk '{print \$2}')
+	line=\${line/\#*/}
+	line=\$(echo \$line |sed -e "s/^[ \s]\{1,\}//g" | sed -e "s/[ \s]\{1,\}$//g");
+	if [[ -n "\$line" ]]; then
+		if [[ \${line:0:1} == "\$" ]]; then
+                echo \${line:1};
+                eval \${line:1};
+                continue;
+        fi
+        
+	    from=\$(echo \$line|awk '{print \$1}')
+	    to=\$(echo \$line|awk '{print \$2}')
 
-    from_ip=\${from/:*/}
-    from_port=\${from/*:/}
+	    from_ip=\${from/:*/}
+	    from_port=\${from/*:/}
 
-    to_ip=\${to/:*/}
-    to_port=\${to/*:/}
+	    to_ip=\${to/:*/}
+	    to_port=\${to/*:/}
 
-    #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"    
+	    #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"  
 
-    iptables -t nat -A PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
-    iptables -I FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT
+	    iptables -t nat -D PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
+	    iptables -D FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT  
+
+	    iptables -t nat -A PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
+	    iptables -I FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT
+	fi
 done
 echo "OK"
 EOF
@@ -2940,13 +2961,15 @@ Group=root
 WantedBy=default.target
 
 EOF
+		# 启动服务
+		systemctl daemon-reload;
 		systemctl enable nat-forward.service;
 	fi
 
 	from=$(echo $options |awk -F - '{print $1}')
 	to=$(echo $options |awk -F - '{print $2}') 
 	if [[ $(echo $from |grep ":" |wc -l) -eq 0 ]]; then
-		from="$ip:$from"
+		from="$serverip:$from"
 	fi
 	
 	local file="/etc/sysconfig/nat-tables"
