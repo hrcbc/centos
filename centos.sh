@@ -2913,7 +2913,7 @@ fi
 
 cmd=""
 
-cat \$file | while read line
+while read line
 do
         # 去注释
         line=\${line/\#*/}
@@ -2942,21 +2942,24 @@ do
             #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"
             
 
-            cmd="\$cmd\niptables -t nat     -D POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
-            cmd="\$cmd\niptables -t nat     -D PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\$to_port"
-            cmd="\$cmd\niptables -D FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp" 
+            cmd=\${cmd}"\niptables -t nat     -D POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip > /dev/null 2>&1"
+            cmd=\${cmd}"\niptables -t nat     -D PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\${to_port/:/-} > /dev/null 2>&1;"
+            cmd=\${cmd}"\niptables -D FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp > /dev/null 2>&1;" 
 
-            cmd="\$cmd\n"
-
-            cmd="\$cmd\niptables -t nat     -A POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
-            cmd="\$cmd\niptables -t nat     -A PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\$to_port"
-            cmd="\$cmd\niptables -I FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp"
+            cmd=\${cmd}"\niptables -t nat     -A POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
+            cmd=\${cmd}"\niptables -t nat     -A PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\${to_port/:/-}"
+            cmd=\${cmd}"\niptables -I FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp"
         fi
-done
+done < \$file
 
-if [[ -n "\$cmd" ]]; then
-	echo -e "\$cmd"
-	eval "\$cmd" > /dev/null 2>&1;
+
+if [[ -n "\$cmd" ]]; then        
+    #echo -e "\$cmd"
+    echo -e \$cmd | while read line
+    do
+        echo "\$line"
+       	eval "\$line"
+    done 
 fi
 
 echo "OK"
