@@ -1153,11 +1153,11 @@ Group=tomcat
 WantedBy=multi-user.target
 EOF
 		
-		site_home="/var/sites/tomcat/default";
+		site_home="/var/www/tomcat/default";
 
 		# 修改配置文件
 		if [[ -n "$host_name" ]]; then
-			site_home="/var/sites/tomcat/$host_name";
+			site_home="/var/www/tomcat/$host_name";
 
 			tmpfile="/tmp/$RANDOM";
 			cat >>$tmpfile<<EOF
@@ -3007,7 +3007,6 @@ EOF
 
 	sh /etc/nat-forward.sh
 }
-
 
 case $action in
 	install)
