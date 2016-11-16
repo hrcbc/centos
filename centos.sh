@@ -2902,7 +2902,7 @@ function nat-forward()
 		cat >>/etc/nat-forward.sh<<EOF
 #!/bin/bash
 
-firewall-cmd --add-masquerade
+firewall-cmd --add-masquerade > /dev/null 2>&1;
 
 file="/etc/sysconfig/nat-tables"
 
@@ -2911,35 +2911,54 @@ if [[ ! -f "\$file" ]]; then
     exit
 fi
 
+cmd=""
+
 cat \$file | while read line
 do
-	line=\${line/\#*/}
-	line=\$(echo \$line |sed -e "s/^[ \s]\{1,\}//g" | sed -e "s/[ \s]\{1,\}$//g");
-	if [[ -n "\$line" ]]; then
-		if [[ \${line:0:1} == "\$" ]]; then
+        # 去注释
+        line=\${line/\#*/}
+        # 去头尾空白
+        line=\$(echo \$line |sed -e "s/^[ \s]\{1,\}//g" | sed -e "s/[ \s]\{1,\}\$//g");
+
+        if [[ -n "\$line" ]]; then
+            # 直接执行命令
+            if [[ \${line:0:1} == "\$" ]]; then
                 echo \${line:1};
                 eval \${line:1};
                 continue;
+            fi
+
+            from=\$(echo \$line|awk '{print \$1}')
+            to=\$(echo \$line|awk '{print \$2}')
+
+            from_ip=\${from/:*/}
+            from_port=\${from/*:/}
+            from_port=\${from_port/-/:}
+
+            to_ip=\${to/:*/}
+            to_port=\${to/*:/}
+            to_port=\${to_port/-/:}
+
+            #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"
+            
+
+            cmd="\$cmd\niptables -t nat     -D POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
+            cmd="\$cmd\niptables -t nat     -D PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\$to_port"
+            cmd="\$cmd\niptables -D FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp" 
+
+            cmd="\$cmd\n"
+
+            cmd="\$cmd\niptables -t nat     -A POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
+            cmd="\$cmd\niptables -t nat     -A PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\$to_port"
+            cmd="\$cmd\niptables -I FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp"
         fi
-        
-	    from=\$(echo \$line|awk '{print \$1}')
-	    to=\$(echo \$line|awk '{print \$2}')
-
-	    from_ip=\${from/:*/}
-	    from_port=\${from/*:/}
-
-	    to_ip=\${to/:*/}
-	    to_port=\${to/*:/}
-
-	    #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"  
-
-	    iptables -t nat -D PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
-	    iptables -D FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT  
-
-	    iptables -t nat -A PREROUTING -d \$from_ip -p tcp --dport \$from_port -j DNAT --to \$to_ip:\$to_port
-	    iptables -I FORWARD -d \$to_ip/32 -p tcp -m state --state NEW -m tcp --dport \$to_port -j ACCEPT
-	fi
 done
+
+if [[ -n "\$cmd" ]]; then
+	echo -e "\$cmd"
+	eval "\$cmd" > /dev/null 2>&1;
+fi
+
 echo "OK"
 EOF
 		chmod ug+x /etc/nat-forward.sh
@@ -2966,17 +2985,22 @@ EOF
 		systemctl enable nat-forward.service;
 	fi
 
-	from=$(echo $options |awk -F - '{print $1}')
-	to=$(echo $options |awk -F - '{print $2}') 
-	if [[ $(echo $from |grep ":" |wc -l) -eq 0 ]]; then
-		from="$serverip:$from"
-	fi
+	if [[ -n "$options" ]]; then
+		from=$(echo $options |awk -F - '{print $1}')
+		to=$(echo $options |awk -F - '{print $2}') 
+		if [[ $(echo $from |grep ":" |wc -l) -eq 0 ]]; then
+			from="$serverip:$from"
+		fi
 	
-	local file="/etc/sysconfig/nat-tables"
-	if [[ -f "$file" ]]; then
-		sed -i "/$from.*/d" $file
+		local file="/etc/sysconfig/nat-tables"
+		if [[ -f "$file"  ]]; then
+			rm -rf $file.bak
+			cp $file $file.bak
+
+			sed -i "/$from.*/d" $file
+		fi
+		echo "$from $to" >> $file
 	fi
-	echo "$from $to" >> $file
 
 	sh /etc/nat-forward.sh
 }
