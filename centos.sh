@@ -1080,17 +1080,17 @@ function install_tomcat()
 		input_host_name;
 
 		# 下载解压文件
-		if [[ ! -f "apache-tomcat-8.5.8.tar.gz" ]]; then
-			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.8/bin/apache-tomcat-8.5.8.tar.gz;
+		if [[ ! -f "apache-tomcat-8.5.9.tar.gz" ]]; then
+			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.9/bin/apache-tomcat-8.5.9.tar.gz;
 		fi
 
-		rm -rf /var/local/apache-tomcat-8.5.8;
+		rm -rf /var/local/apache-tomcat-8.5.9;
 		rm -rf /var/local/tomcat;
 
-		tar xzvf ./apache-tomcat-8.5.8.tar.gz -C /var/local;
-		ln -s /var/local/apache-tomcat-8.5.8 /var/local/tomcat;
+		tar xzvf ./apache-tomcat-8.5.9.tar.gz -C /var/local;
+		ln -s /var/local/apache-tomcat-8.5.9 /var/local/tomcat;
 
-		#rm -rf ./apache-tomcat-8.5.8.tar.gz;
+		#rm -rf ./apache-tomcat-8.5.9.tar.gz;
 
 		# 添加防火墙
 		firewall-cmd --permanent --zone=public --add-port=8080/tcp;
@@ -1113,8 +1113,8 @@ function install_tomcat()
 		getent group tomcat || groupadd -r tomcat;
 		getent passwd tomcat || useradd -r -d $TOMCAT_HOME -s /bin/nologin -g tomcat tomcat;
 		chown -R tomcat:tomcat $TOMCAT_HOME;
-		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.8;
-		chmod -R ug+rwx /var/local/apache-tomcat-8.5.8;
+		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.9;
+		chmod -R ug+rwx /var/local/apache-tomcat-8.5.9;
 
 
 		cat >>$TOMCAT_HOME/bin/setenv.sh<<EOF
