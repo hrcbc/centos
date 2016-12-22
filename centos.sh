@@ -821,6 +821,7 @@ dirmessage_enable=YES
 xferlog_enable=YES
 connect_from_port_20=YES
 nopriv_user=vsftpd
+allow_writeable_chroot=YES
 chroot_local_user=YES
 secure_chroot_dir=/var/run/vsftpd
 pam_service_name=vsftpd
@@ -848,6 +849,7 @@ EOF
 		rm -rf /etc/vsftpd/vsftpd_user_conf/$ftp_username
 		cat >>/etc/vsftpd/vsftpd_user_conf/$ftp_username<<EOF
 write_enable=YES
+allow_writeable_chroot=YES
 anon_world_readable_only=NO
 anon_upload_enable=YES
 anon_mkdir_write_enable=YES
