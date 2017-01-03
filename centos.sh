@@ -17,7 +17,7 @@ USAGE="
 
  OPTIONS
  	--install    		    Install server componect,include:mysql,http,svn,vpn,ftp,tomcat,oracle,weblogic,cobbler,kvm
-    --config-route
+  --config-route
  	--host-name  		    Domain name for the host.
  	--http-proxy-tomcat     When the value is 1, set the HTTP reverse proxy to Tomcat,default 1
  	--oracle-password   	Specify the super user‘s password
@@ -261,8 +261,6 @@ iprange="10.0.1";
 vpn_username="guoliang";
 vpn_password="xgl.1234";
 
-
-
 # HTTP
 
 
@@ -327,7 +325,8 @@ function install()
 
 	install_mysql;
 
-	install_vpn;
+	#install_vpn;
+  install_strongswan;
 
 	install_ftp;
 
@@ -763,13 +762,19 @@ EOF
 }
 
 function install_strongswan() {
-  yum install -y strongswan;
-  systemctl enable strongswan
-  systemctl start strongswan
+  # running a strongswan server with radius on your VPS
+  # https://www.kiritostudio.com/running-a-strongswan-server-with-radius-on-your-vps/
+  yum install strongswan openssl;
+
+  input_host_name;
+  CN="$host_name";
+  if [[ -z "$CN" ]]; then
+    CN="$serverip";
+  fi
 
   # 生成证书
   # 1. 生成一个私钥：
-  strongswan pki --gen --outform pem > ca.key.pem
+  strongswan pki --gen --type rsa --size 4096 --outform pem > ca.key.pem
 
   # 2. 基于这个私钥自己签一个 CA 根证书
   # –self 表示自签证书
@@ -781,18 +786,18 @@ function install_strongswan() {
   #   CN 友好显示的通用名
   # –ca 表示生成 CA 根证书
   # –lifetime 为有效期, 单位是天
-  strongswan pki --self --in ca.key.pem --dn "C=CN, O=GuoLiang, CN=GuoLiang CA" --ca --lifetime 3650 --outform pem > ca.cert.pem
+  strongswan pki --self --in ca.key.pem --dn "C=CN, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem > ca.cert.pem
 
   # 生成服务器端证书
   # 1. 同样先生成一个私钥
-  strongswan pki --gen --outform pem > server.key.pem
+  strongswan pki --gen --type rsa --size 2048 --outform pem > server.key.pem
 
   # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
   # 从私钥生成公钥
-  strongswan pki --pub --in server.key.pem --outform pem > server.pub.pem
+  strongswan pki --pub --in server.key.pem --type rsa --outform pem > server.pub.pem
 
   # 用刚生成的公钥生成服务器证书
-  strongswan pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.key.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=us.1ms.im" --san="us.1ms.im" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
+  strongswan pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.key.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=$CN" --san="$CN" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
   # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
   # –dn, –san，–flag 是一些客户端方面的特殊要求：
 
@@ -832,88 +837,73 @@ function install_strongswan() {
   rm -rf /etc/strongswan/ipsec.conf;
   cat >>/etc/strongswan/ipsec.conf<<EOF
 config setup
-    #<em>cachecrls = yes</em>
-    # strictcrlpolicy=yes
-    uniqueids=no
-#ca %default
-    #crluri = <uri>
+    uniqueids=never
+    charondebug="cfg 2, dmn 2, ike 2, net 0"
+
 conn %default
-    compress = yes
-    dpdaction = hold
-    dpddelay = 30s
-    dpdtimeout = 60s
-    inactivity = 300s
-    esp = aes256-sha256,aes256-sha1,3des-sha1!
-    ike = aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
-    keyexchange = ike
-    left = %any
-    right = %any
-    leftdns = 8.8.8.8,8.8.4.4
-    rightdns = 8.8.8.8,8.8.4.4
-    rightsourceip = 10.0.0.0/24
-    leftsubnet = 0.0.0.0/0
-    #rightsubnet = <ip subnet>[[<proto/port>]][,...]
+    left=%defaultroute
+    leftsubnet=0.0.0.0/0
+    leftcert=server.cert.pem
+    right=%any
+    rightsourceip=$iprange.100/16
 
-conn IKEv2-BASE
-    leftca = "C=CN, O=GuoLiang, CN=GuoLiang CA"
-    leftcert = server.cert.pem
-    leftsigkey = server.pub.pem
-    leftsendcert = always
-    rightsendcert = never
-    leftauth = pubkey
-    rightauth = eap-mschapv2
-    leftid = us.1ms.im
-    rightid = %any
+conn CiscoIPSec
+    keyexchange=ikev1
+    fragmentation=yes
+    rightauth=pubkey
+    rightauth2=xauth
+    leftsendcert=always
+    rekey=no
+    auto=add
 
-#ios, mac os, win7+, linux
-conn IKEv2-EAP
-    also=IKEv2-BASE
-    eap_identity = %any
-    rekey = no
-    fragmentation = yes
-    auto = add
+conn XauthPsk
+    keyexchange=ikev1
+    leftauth=psk
+    rightauth=psk
+    rightauth2=xauth
+    auto=add
+
+conn IpsecIKEv2
+    keyexchange=ikev2
+    leftauth=pubkey
+    rightauth=pubkey
+    leftsendcert=always
+    auto=add
+
+conn IpsecIKEv2-EAP
+    keyexchange=ikev2
+    ike=aes256-sha1-modp1024!
+    rekey=no
+    leftauth=pubkey
+    leftsendcert=always
+    rightauth=eap-mschapv2
+    eap_identity=%any
+    auto=add
 EOF
 
-  mv /etc/strongswan/strongswan.d/charon.conf /etc/strongswan/strongswan.d/charon.conf.bak
-  cat >>/etc/strongswan/strongswan.d/charon.conf<<EOF
+  rm -rf /etc/strongswan/strongswan.conf
+  cat >>/etc/strongswan/strongswan.conf<<EOF
 charon {
+    load_modular = yes
     duplicheck.enable = no
+    compress = yes
+    plugins {
+            include strongswan.d/charon/*.conf
+    }
     dns1 = 8.8.8.8
     dns2 = 8.8.4.4
-    filelog {
-        /var/log/charon.log {
-            # add a timestamp prefix
-            time_format = %b %e %T
-            # prepend connection name, simplifies grepping
-            ike_name = yes
-            # overwrite existing files
-            append = no
-            # increase default loglevel for all daemon subsystems
-            default = 1
-            # flush each line to disk
-            flush_line = yes
-        }
-    }
+    nbns1 = 8.8.8.8
+    nbns2 = 8.8.4.4
 }
 
+include strongswan.d/*.conf
 EOF
 
   rm -rf /etc/strongswan/ipsec.secrets
   cat>>/etc/strongswan/ipsec.secrets<<EOF
-#使用证书验证时的服务器端私钥
-#格式 : RSA <private key file> [ <passphrase> | %prompt ]
 : RSA server.key.pem
-
-#使用预设加密密钥, 越长越好
-#格式 [ <id selectors> ] : PSK <secret>
-%any : PSK "$shared_secret"
-
-
-#EAP 方式, 格式同 psk 相同
+: PSK "$shared_secret"
 $vpn_username : EAP "$vpn_password"
-
-#XAUTH 方式, 只适用于 IKEv1
-#格式 [ <servername> ] <username> : XAUTH "<password>"
 $vpn_username : XAUTH "$vpn_password"
 EOF
 
@@ -926,20 +916,25 @@ EOF
   sysctl -p
 
   # 配置防火墙
-  rm -rf /etc/firewalld/services/strongswan.xml
-  cat>>/etc/firewalld/services/strongswan.xml<<EOF
-<?xml version="1.0" encoding="utf-8"?>
-<service>
-  <short>Strongswan</short>
-  <description>Strongswan VPN</description>
-  <port protocol="udp" port="500,4500"/>
-</service>
-EOF
+  #rm -rf /etc/firewalld/services/strongswan.xml
+#  cat>>/etc/firewalld/services/strongswan.xml<<EOF
+#<?xml version="1.0" encoding="utf-8"?>
+#<service>
+#  <short>Strongswan</short>
+#  <description>Strongswan VPN</description>
+#  <port protocol="udp" port="500,4500"/>
+#</service>
+#EOF
 
-  firewall-cmd --permanen --add-service=strongswan
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" masquerade'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="4500" protocol="udp" to-port="4500"'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="500" protocol="udp" to-port="500"'
+#  firewall-cmd --reload;
+#  firewall-cmd --permanen --add-service=strongswan
+#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" masquerade'
+#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="4500" protocol="udp" to-port="4500"'
+#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="500" protocol="udp" to-port="500"'
+  firewall-cmd --permanent --add-service="ipsec"
+  firewall-cmd --permanent --add-port=4500/udp
+  firewall-cmd --permanent --add-masquerade
+  firewall-cmd --reload;
   # 对应iptables配置
   # 开放端口
   # iptables -A INPUT -p udp --dport 500 -j ACCEPT
@@ -947,13 +942,13 @@ EOF
 
   #启用ip伪装
   # iptables -t nat -I POSTROUTING -s 10.1.0.0/16 -o eth0 -m policy --dir out --pol ipsec -j ACCEPT
-  i# ptables -t nat -A POSTROUTING -s 10.1.0.0/16 -o eth0 -j MASQUERADE
+  # iptables -t nat -A POSTROUTING -s 10.1.0.0/16 -o eth0 -j MASQUERADE
 
   #添加转发
   # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
 
-  strongswan stop
-
+  systemctl enable strongswan
+  systemctl start strongswan
 }
 
 function install_ftp()
