@@ -24,7 +24,7 @@ USAGE="
  	--weblogic-password		Specify the Weblogic console user‘s password
  	--gitlab-port 			Define gitlab visit port,default 80
  	--mysql-password		Specify mysql root user's password
- 	--config-route			Automatically configure the  IP routing for multi network interfaces 
+ 	--config-route			Automatically configure the  IP routing for multi network interfaces
  	--nat-forward			Configure nat port forwarding
  	--skip-update
 ";
@@ -127,7 +127,7 @@ http_proxy_tomcat=1
 # Oracle
 oracle_password="";
 
-# Weblogic 
+# Weblogic
 weblogic_password="abcd1234"
 
 # Gitlab
@@ -169,7 +169,7 @@ do
 
 		--start)
 			action="$1";
-			action=${action:2};			
+			action=${action:2};
 			shift;;
 
 		--ssh-port)
@@ -178,11 +178,11 @@ do
 
 		--host-name)
 			host_name="$2";
-			shift 2;;	
+			shift 2;;
 
 		--http-proxy-tomcat)
 			http_proxy_tomcat="$2";
-			shift 2;;		
+			shift 2;;
 
 		--oracle-password)
 			oracle_password="$2";
@@ -222,7 +222,7 @@ if [[ $action == "install" ]]; then
         options=${options//+/|+};
         options=${options//-/|-};
         options=${options//,/|,};
-	else    
+	else
         options="all";
 	fi
 
@@ -296,10 +296,10 @@ o_kvm_state=$(option_test "kvm");
 # 域名输入
 function input_host_name() {
 	if [[ -z "$host_name" ]]; then
-		printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"	
+		printf "Please input \e[33mdomain name\e[0m for server,if dont't use domain let it blank:\n"
 		read tmp;
 		host_name="$tmp";
-	fi	
+	fi
 }
 
 # Oracle超级密码输入
@@ -307,17 +307,17 @@ function input_oracle_password() {
 	if [[ -z "$oracle_password" ]]; then
 		while [[ -z "$oracle_password" ]]
 		do
-			printf "Please input \e[33moracle password\e[0m:\n"	
+			printf "Please input \e[33moracle password\e[0m:\n"
 			read tmp;
 			oracle_password="$tmp";
 		done
-	fi	
+	fi
 }
 
 
 function install()
 {
-	
+
 	sync_time;
 
 	setup_selinux;
@@ -352,7 +352,7 @@ function sync_time()
 {
 	if [[ $(service_test "chronyd") -eq 0 ]]; then
 		yum install -y chrony;
-		timedatectl set-timezone Asia/Shanghai 
+		timedatectl set-timezone Asia/Shanghai
 		timedatectl set-local-rtc 1
 		systemctl enable chronyd
 		systemctl start chronyd
@@ -377,10 +377,10 @@ function setup_selinux()
 }
 
 function change_sshd_port()
-{	
+{
 	if [[ $(grep "^Port $ssh_port" /etc/ssh/sshd_config | wc -l) -eq 0 ]]; then
 		echo "Change ssh port to : $ssh_port"
-	
+
 		# Add selinux port
 		semanage port -a -t ssh_port_t -p tcp $ssh_port;
 		# Add firewall port
@@ -506,7 +506,7 @@ conn L2TP-PSK-noNAT
     dpddelay=40
     dpdtimeout=130
     dpdaction=clear
-    ike=3des-sha1,aes-sha1,aes256-sha1,aes256-sha2_256 
+    ike=3des-sha1,aes-sha1,aes256-sha1,aes256-sha2_256
     phase2alg=3des-sha1,aes-sha1,aes256-sha1,aes256-sha2_256
     sha2-truncbug=yes
 # For example connections, see your distribution's documentation directory,
@@ -519,7 +519,7 @@ conn L2TP-PSK-noNAT
 # by uncommenting this line
 #include /etc/ipsec.d/*.conf
 EOF
-	
+
 		#设置预共享密钥配置文件
 		yes |mv /etc/ipsec.secrets /etc/ipsec.secrets.bak;
 		cat >>/etc/ipsec.secrets<<EOF
@@ -637,7 +637,7 @@ proxyarp
 #debug
 #dump
 lock
-nobsdcomp 
+nobsdcomp
 novj
 novjccomp
 nologfd
@@ -720,7 +720,7 @@ EOF
 		sed -i "$ a net.ipv4.conf.default.accept_redirects = 0" /etc/sysctl.conf
 
 		#允许防火墙端口
-		rm -rf /usr/lib/firewalld/services/pptpd.xml 
+		rm -rf /usr/lib/firewalld/services/pptpd.xml
 		cat >>/usr/lib/firewalld/services/pptpd.xml<<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <service>
@@ -729,7 +729,7 @@ EOF
   <port protocol="tcp" port="1723"/>
 </service>
 EOF
-	
+
 		rm -rf /usr/lib/firewalld/services/l2tpd.xml
 
 		cat >>/usr/lib/firewalld/services/l2tpd.xml<<EOF
@@ -742,7 +742,7 @@ EOF
   <port protocol="udp" port="1701"/>
 </service>
 EOF
-	
+
 		firewall-cmd --reload;
 		firewall-cmd --permanent --add-service=pptpd;
 		firewall-cmd --permanent --add-service=l2tpd;
@@ -761,6 +761,199 @@ EOF
 	fi
 }
 
+function install_strongswan() {
+  yum install -y strongswan;
+  systemctl enable strongswan
+  systemctl start strongswan
+
+  # 生成证书
+  # 1. 生成一个私钥：
+  strongswan pki --gen --outform pem > ca.key.pem
+
+  # 2. 基于这个私钥自己签一个 CA 根证书
+  # –self 表示自签证书
+  #  –in 是输入的私钥
+  # –dn 是判别名
+
+  #   C 表示国家名，同样还有 ST 州/省名，L 地区名，STREET（全大写） 街道名
+  #   O 组织名称
+  #   CN 友好显示的通用名
+  # –ca 表示生成 CA 根证书
+  # –lifetime 为有效期, 单位是天
+  strongswan pki --self --in ca.key.pem --dn "C=CN, O=GuoLiang, CN=GuoLiang CA" --ca --lifetime 3650 --outform pem > ca.cert.pem
+
+  # 生成服务器端证书
+  # 1. 同样先生成一个私钥
+  strongswan pki --gen --outform pem > server.key.pem
+
+  # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
+  # 从私钥生成公钥
+  strongswan pki --pub --in server.key.pem --outform pem > server.pub.pem
+
+  # 用刚生成的公钥生成服务器证书
+  strongswan pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.key.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=us.1ms.im" --san="us.1ms.im" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
+  # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
+  # –dn, –san，–flag 是一些客户端方面的特殊要求：
+
+  # iOS 客户端要求 CN 也就是通用名必须是你的服务器的 URL 或 IP 地址;
+  # Windows 7 不但要求了上面，还要求必须显式说明这个服务器证书的用途（用于与服务器进行认证），–flag serverAuth;
+  # 非 iOS 的 Mac OS X 要求了“IP 安全网络密钥互换居间（IP Security IKE Intermediate）”这种增强型密钥用法（EKU），–flag ikdeIntermediate;
+  # Android 和 iOS 都要求服务器别名（serverAltName）就是服务器的 URL 或 IP 地址，–san。
+
+  # 生成客户端证书(可选)
+
+  # 客户端证书是在启用客户端证书验证的时候, 用于验证客户端用户身份的. 每个用户一个证书. 如果需要很高的安全性, 可以用客户端证书, 一般情况下, 不需要使用.
+  # 1. 依然是生成私钥：
+
+  #strongswan pki --gen --outform pem > client.key.pem
+
+  # 2. 然后用刚才自签的 CA 证书来签客户端证书：
+  # 从私钥生成公钥
+  #strongswan pki --pub --in client.key.pem --outform pem > client.pub.pem
+
+  # 这里就不需要上面那一堆特殊参数了
+
+  #strongswan pki --issue --lifetime 1200 --cacert ca.cert.pem --cakey ca.key.pem --in client.pub.pem --dn "C=CN, O=GuoLiang, CN=us.1ms.im" --outform pem > client.cert.pem
+  # 打包证书为 pkcs12
+
+  #openssl pkcs12 -export -inkey client.key.pem -in client.cert.pem -name "GuoLiang Client Cert" -certfile ca.cert.pem -caname "ITnmg StrongSwan CA" -out client.cert.p12
+  # 此时会提示输入两次密码, 这个密码是在导入证书到其他系统时需要验证的. 没有这个密码即使别人拿到了证书也没法使用.
+
+
+  cp -r ca.key.pem /etc/strongswan/ipsec.d/private/
+  cp -r ca.cert.pem /etc/strongswan/ipsec.d/cacerts/
+  cp -r server.cert.pem /etc/strongswan/ipsec.d/certs/
+  cp -r server.pub.pem /etc/strongswan/ipsec.d/certs/
+  cp -r server.key.pem /etc/strongswan/ipsec.d/private/
+  #cp -r client.cert.pem /etc/strongswan/ipsec.d/certs/
+  #cp -r client.key.pem /etc/strongswan/ipsec.d/private/
+
+  rm -rf /etc/strongswan/ipsec.conf;
+  cat >>/etc/strongswan/ipsec.conf<<EOF
+config setup
+    #<em>cachecrls = yes</em>
+    # strictcrlpolicy=yes
+    uniqueids=no
+#ca %default
+    #crluri = <uri>
+conn %default
+    compress = yes
+    dpdaction = hold
+    dpddelay = 30s
+    dpdtimeout = 60s
+    inactivity = 300s
+    esp = aes256-sha256,aes256-sha1,3des-sha1!
+    ike = aes256-sha1-modp1024,aes128-sha1-modp1024,3des-sha1-modp1024!
+    keyexchange = ike
+    left = %any
+    right = %any
+    leftdns = 8.8.8.8,8.8.4.4
+    rightdns = 8.8.8.8,8.8.4.4
+    rightsourceip = 10.0.0.0/24
+    leftsubnet = 0.0.0.0/0
+    #rightsubnet = <ip subnet>[[<proto/port>]][,...]
+
+conn IKEv2-BASE
+    leftca = "C=CN, O=GuoLiang, CN=GuoLiang CA"
+    leftcert = server.cert.pem
+    leftsigkey = server.pub.pem
+    leftsendcert = always
+    rightsendcert = never
+    leftauth = pubkey
+    rightauth = eap-mschapv2
+    leftid = us.1ms.im
+    rightid = %any
+
+#ios, mac os, win7+, linux
+conn IKEv2-EAP
+    also=IKEv2-BASE
+    eap_identity = %any
+    rekey = no
+    fragmentation = yes
+    auto = add
+EOF
+
+  mv /etc/strongswan/strongswan.d/charon.conf /etc/strongswan/strongswan.d/charon.conf.bak
+  cat >>/etc/strongswan/strongswan.d/charon.conf<<EOF
+charon {
+    duplicheck.enable = no
+    dns1 = 8.8.8.8
+    dns2 = 8.8.4.4
+    filelog {
+        /var/log/charon.log {
+            # add a timestamp prefix
+            time_format = %b %e %T
+            # prepend connection name, simplifies grepping
+            ike_name = yes
+            # overwrite existing files
+            append = no
+            # increase default loglevel for all daemon subsystems
+            default = 1
+            # flush each line to disk
+            flush_line = yes
+        }
+    }
+}
+
+EOF
+
+  rm -rf /etc/strongswan/ipsec.secrets
+  cat>>/etc/strongswan/ipsec.secrets<<EOF
+#使用证书验证时的服务器端私钥
+#格式 : RSA <private key file> [ <passphrase> | %prompt ]
+: RSA server.key.pem
+
+#使用预设加密密钥, 越长越好
+#格式 [ <id selectors> ] : PSK <secret>
+%any : PSK "$shared_secret"
+
+
+#EAP 方式, 格式同 psk 相同
+$vpn_username : EAP "$vpn_password"
+
+#XAUTH 方式, 只适用于 IKEv1
+#格式 [ <servername> ] <username> : XAUTH "<password>"
+$vpn_username : XAUTH "$vpn_password"
+EOF
+
+  # 开启内核转发
+  sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
+  sed -i "/net.ipv6.conf.all.forwarding/d" /etc/sysctl.conf
+
+  sed -i "$ a net.ipv4.ip_forward = 1" /etc/sysctl.conf
+  sed -i "$ a net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf
+  sysctl -p
+
+  # 配置防火墙
+  rm -rf /etc/firewalld/services/strongswan.xml
+  cat>>/etc/firewalld/services/strongswan.xml<<EOF
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>Strongswan</short>
+  <description>Strongswan VPN</description>
+  <port protocol="udp" port="500,4500"/>
+</service>
+EOF
+
+  firewall-cmd --permanen --add-service=strongswan
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" masquerade'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="4500" protocol="udp" to-port="4500"'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="500" protocol="udp" to-port="500"'
+  # 对应iptables配置
+  # 开放端口
+  # iptables -A INPUT -p udp --dport 500 -j ACCEPT
+  # iptables -A INPUT -p udp --dport 4500 -j ACCEPT
+
+  #启用ip伪装
+  # iptables -t nat -I POSTROUTING -s 10.1.0.0/16 -o eth0 -m policy --dir out --pol ipsec -j ACCEPT
+  i# ptables -t nat -A POSTROUTING -s 10.1.0.0/16 -o eth0 -j MASQUERADE
+
+  #添加转发
+  # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
+
+  strongswan stop
+
+}
 
 function install_ftp()
 {
@@ -771,8 +964,8 @@ function install_ftp()
 		install_mysql 1;
 
 		echo "Instal vsftpd...";
-	
-		yum install -y vsftpd ftp;	
+
+		yum install -y vsftpd ftp;
 		if [[ ! -f "pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm"  ]]; then
 			wget -N https://raw.githubusercontent.com/hrcbc/centos/master/pam_mysql-0.7-0.16.rc1.fc20.x86_64.rpm;
 		fi
@@ -785,7 +978,7 @@ function install_ftp()
 		useradd --home /home/vsftpd --gid nogroup -m --shell /bin/false vsftpd;
 
 		mysql -uroot -p$mysql_root_password -e "
-			drop database if exists ftpserver; 
+			drop database if exists ftpserver;
 			create database ftpserver;
 			grant select,insert,update,delete,create,drop on ftpserver.* to 'vsftpd'@'localhost' identified by '$mysql_vsftpd_password';
 			grant select,insert,update,delete,create,drop on ftpserver.* to 'vsftpd'@'localhost.localdomain' identified by '$mysql_vsftpd_password';
@@ -832,7 +1025,7 @@ virtual_use_local_privs=YES
 pasv_promiscuous=YES
 user_config_dir=/etc/vsftpd/vsftpd_user_conf
 EOF
-	
+
 		mkdir -p /var/run/vsftpd;
 
 		yes |mv /etc/pam.d/vsftpd /etc/pam.d/vsftpd.bak
@@ -841,7 +1034,7 @@ EOF
 auth required pam_mysql.so user=vsftpd passwd=$mysql_vsftpd_password host=localhost db=ftpserver table=accounts usercolumn=username passwdcolumn=pass crypt=2
 account required pam_mysql.so user=vsftpd passwd=$mysql_vsftpd_password host=localhost db=ftpserver table=accounts usercolumn=username passwdcolumn=pass crypt=2
 EOF
-	
+
 		mkdir -p /etc/vsftpd/vsftpd_user_conf;
 
 		rm -rf /etc/vsftpd/vsftpd_user_conf/$ftp_username
@@ -853,7 +1046,7 @@ anon_mkdir_write_enable=YES
 anon_other_write_enable=YES
 local_root=/
 EOF
-	
+
 
 		sed -i "/mkdir -p \/var\/run\/vsftpd/d" /etc/rc.local
 		sed -i "$ a mkdir -p \/var\/run\/vsftpd"  /etc/rc.local
@@ -864,7 +1057,7 @@ EOF
 		setsebool -P tftp_home_dir 1;
 		setsebool -P ftpd_full_access 1;
 		setsebool -P allow_ftpd_anon_write 1;
-		
+
 		semanage port -a -t  ftp_port_t -p tcp 8342;
 		firewall-cmd --permanent --zone=public --add-port=8342/tcp;
 		firewall-cmd --permanent --zone=public --add-port=50000-60000/tcp;
@@ -908,31 +1101,31 @@ function install_httpd()
 			cat >>/etc/httpd/vhost-conf.d/$host_name.conf<<EOF
 NameVirtualHost *:80
 
-<VirtualHost *:80>  
-   ServerName $host_name  
+<VirtualHost *:80>
+   ServerName $host_name
    ServerAlias $host_name
-   DocumentRoot $site_dir  
-   DirectoryIndex index.html index.php  
-</VirtualHost>  
-<Directory "$site_dir">  
-   Options +Includes -Indexes  
-   AllowOverride All  
-   Order Deny,Allow  
-   Allow from All  
+   DocumentRoot $site_dir
+   DirectoryIndex index.html index.php
+</VirtualHost>
+<Directory "$site_dir">
+   Options +Includes -Indexes
+   AllowOverride All
+   Order Deny,Allow
+   Allow from All
 </Directory>
 
-<Directory "$site_dir/downloads">  
+<Directory "$site_dir/downloads">
    Options Indexes FollowSymLinks
-   AllowOverride All  
-   Order Deny,Allow  
-   Allow from All  
+   AllowOverride All
+   Order Deny,Allow
+   Allow from All
 </Directory>
 EOF
 		fi
 
 		mkdir -p $site_dir;
-		
-		
+
+
 
 		# 配置phpMyAdmin
 		sed -i "s/Require ip 127.0.0.1/Require all granted/g" /etc/httpd/conf.d/phpMyAdmin.conf;
@@ -975,17 +1168,17 @@ EOF
 			semanage fcontext -a -t public_content_rw_t "/var/www/$host_name(/.*)?"
 			restorecon -R -v /var/www/$host_name
 		fi
-		
-		
+
+
 		echo "HTTP server installed success."
 
 		o_http_state=2;
 	fi
-	
+
 }
 
 
-function install_svn() 
+function install_svn()
 {
 	if [[ $o_svn_state -eq 1 || $1 -eq 1 ]] && [[  $(command_test "svnadmin") -eq 0 ]] && [ ! -f "/etc/httpd/conf.d/httpd-svn.conf" ]; then
 
@@ -996,7 +1189,7 @@ function install_svn()
 		echo "Start installing SVN...";
 
 		yum install -y subversion mod_dav_svn mod_ssl openssl-devel  apr-util-mysql;
-		
+
 		 cp /usr/lib64/apr-util-1/apr_dbd_mysql.so /etc/httpd/modules/
 		# 配置Apache
 
@@ -1042,7 +1235,7 @@ EOF
 
 		# 创建数据库用户
 		mysql -uroot -p$mysql_root_password -e "
-			drop database if exists $svn_dbname; 
+			drop database if exists $svn_dbname;
 			create database $svn_dbname;
 			grant select,insert,update,delete,create,drop on $svn_dbname.* to '$svn_dbuser'@'localhost' identified by '$mysql_svn_password';
 			grant select,insert,update,delete,create,drop on $svn_dbname.* to '$svn_dbuser'@'localhost.localdomain' identified by '$mysql_svn_password';
@@ -1067,7 +1260,7 @@ EOF
 		o_svn_state=2;
 	fi
 
-	
+
 }
 
 function install_tomcat()
@@ -1080,9 +1273,9 @@ function install_tomcat()
 
 		# 下载解压文件
 		if [[ ! -f "apache-tomcat-8.5.8.tar.gz" ]]; then
-			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.8/bin/apache-tomcat-8.5.8.tar.gz;	
+			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.8/bin/apache-tomcat-8.5.8.tar.gz;
 		fi
-		
+
 		rm -rf /var/local/apache-tomcat-8.5.8;
 		rm -rf /var/local/tomcat;
 
@@ -1141,7 +1334,7 @@ Environment=CATALINA_BASE=$TOMCAT_HOME
 Environment='CATALINA_OPTS=-Xms512M -Xmx1024M -server -XX:+UseParallelGC'
 Environment='JAVA_OPTS=-Djava.awt.headless=true -Djava.security.egd=file:/dev/./urandom'
 
-ExecStart=$TOMCAT_HOME/bin/startup.sh 
+ExecStart=$TOMCAT_HOME/bin/startup.sh
 ExecReload=/bin/kill -s HUP $MAINPID
 ExecStop=/bin/kill -s QUIT $MAINPID
 PrivateTmp=true
@@ -1152,7 +1345,7 @@ Group=tomcat
 [Install]
 WantedBy=multi-user.target
 EOF
-		
+
 		site_home="/var/www/tomcat/default";
 
 		# 修改配置文件
@@ -1202,7 +1395,7 @@ String basePath = request.getScheme()+"://"+request.getServerName()+":"+request.
 </body>
 </html>
 EOF
-		
+
 		chown -R tomcat:tomcat $site_home;
 		chmod -R ug+rw $site_home/*;
 
@@ -1221,7 +1414,7 @@ EOF
 
 			else
 				sed -i "/ProxyPassMatch \^\/svn_repos\/ \!\//d" /etc/httpd/conf/httpd.conf
-				sed -i "/ProxyPass \/ http:\/\/127.0.0.1:8080\//d" /etc/httpd/conf/httpd.conf 
+				sed -i "/ProxyPass \/ http:\/\/127.0.0.1:8080\//d" /etc/httpd/conf/httpd.conf
 				sed -i "/ProxyPassReverse \/ http:\/\/127.0.0.1:8080\//d" /etc/httpd/conf/httpd.conf
 				cat >>/etc/httpd/conf/httpd.conf<<EOF
 ProxyPassMatch ^/svn_repos/ !
@@ -1247,7 +1440,7 @@ EOF
 function install_oracle12c()
 {
 	# http://m.blog.itpub.net/29047826/viewspace-1422559/
-	# 
+	#
 	if [[ $o_oracle_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "oracle") -eq 0 ]]; then
 
 		clear;
@@ -1265,7 +1458,7 @@ function install_oracle12c()
 		getent passwd oracle || useradd -g oinstall -G dba oracle;
 		echo "$oracle_password" | passwd --stdin oracle;
 
-		# Add kernel parameters 
+		# Add kernel parameters
 		sed -i "/fs\.aio-max-nr[[:space:]]*=.*/d" /etc/sysctl.conf;
 		sed -i "/fs\.file-max[[:space:]]*=.*/d" /etc/sysctl.conf;
 		sed -i "/kernel\.shmall[[:space:]]*=.*/d" /etc/sysctl.conf;
@@ -1306,8 +1499,8 @@ oracle   hard   memlock    	50000000
 oracle   soft   core     	unlimited
 oracle   hard   core     	unlimited
 EOF
-		
-	
+
+
 
 		#sed -i "/.*pam_limits.so/ d" /etc/pam.d/login;
 		#cat >>/etc/pam.d/login<<EOF
@@ -1330,7 +1523,7 @@ EOF
 		unzip linuxamd64_12102_database_1of2.zip -d /stage/
 		unzip linuxamd64_12102_database_2of2.zip -d /stage/
 
-		
+
 		# Install required packages:
 		yum install -y binutils.x86_64 compat-libcap1.x86_64 gcc.x86_64 gcc-c++.x86_64 glibc.i686 glibc.x86_64 glibc-devel.i686 glibc-devel.x86_64 ksh compat-libstdc++-33 libaio.i686 libaio.x86_64 libaio-devel.i686 libaio-devel.x86_64 libgcc.i686 libgcc.x86_64 libstdc++.i686 libstdc++.x86_64 libstdc++-devel.i686 libstdc++-devel.x86_64 libXi.i686 libXi.x86_64 libXtst.i686 libXtst.x86_64 make.x86_64 sysstat.x86_64  glibc-headers  unixODBC unixODBC-devel  zlib-devel;
 
@@ -1412,7 +1605,7 @@ SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 DECLINE_SECURITY_UPDATES=true
 
 EOF
-		
+
 		chown -R oracle:oinstall /stage/
 		chmod -R ug+rwx /stage/
 
@@ -1430,14 +1623,14 @@ EOF
 			expect \"100% Done.\"
 			expect eof
 		");
-		
+
 		echo "$RUN_INSTALL"
 		if [[ $(echo $RUN_INSTALL | grep "100% Done."|wc -l) -eq 1 ]]; then
 			echo "Install finish."
 
 			if [[ -f "$oracle_dir/oraInventory/orainstRoot.sh" ]]; then
 				$oracle_dir/oraInventory/orainstRoot.sh
-			fi	
+			fi
 			if [[ -f "$oracle_dir/db_base/db_home/root.sh" ]]; then
 				$oracle_dir/db_base/db_home/root.sh;
 			fi
@@ -1485,14 +1678,14 @@ OPERATION_TYPE = "createDatabase"
 [CREATEDATABASE]
 GDBNAME = "$gdbname"
 #DATABASECONFTYPE  = "SI"
-#RACONENODESERVICENAME = 
+#RACONENODESERVICENAME =
 #POLICYMANAGED = "false"
 #CREATESERVERPOOL = "false"
-#SERVERPOOLNAME = 
-#CARDINALITY = 
+#SERVERPOOLNAME =
+#CARDINALITY =
 #FORCE = "false"
-#PQPOOLNAME = 
-#PQCARDINALITY = 
+#PQPOOLNAME =
+#PQCARDINALITY =
 SID = "$oracle_sid"
 #CREATEASCONTAINERDATABASE =
 #NUMBEROFPDBS =
@@ -1508,10 +1701,10 @@ EMCONFIGURATION = "NONE"
 #EMEXPRESSPORT = ""
 #RUNCVUCHECKS = FALSE
 #DBSNMPPASSWORD = "password"
-#OMSHOST = 
-#OMSPORT = 
-#EMUSER = 
-#EMPASSWORD= 
+#OMSHOST =
+#OMSPORT =
+#EMUSER =
+#EMPASSWORD=
 #DVCONFIGURATION = "false"
 #DVOWNERNAME = ""
 #DVOWNERPASSWORD = ""
@@ -1556,7 +1749,7 @@ EOF
 			chmod ug+rw /etc/oratab
 			sed -i "$ a $oracle_sid:$ORACLE_HOME:Y" /etc/oratab
 
-			
+
 
 			setenforce 1;
 			o_oracle_state=2;
@@ -1587,7 +1780,7 @@ function install_oracle11gr2()
 		getent passwd oracle || useradd -g oinstall -G dba oracle;
 		echo "$oracle_password" | passwd --stdin oracle;
 
-		# Add kernel parameters 
+		# Add kernel parameters
 		sed -i "/fs\.aio-max-nr[[:space:]]*=.*/d" /etc/sysctl.conf;
 		sed -i "/fs\.file-max[[:space:]]*=.*/d" /etc/sysctl.conf;
 		sed -i "/kernel\.shmall[[:space:]]*=.*/d" /etc/sysctl.conf;
@@ -1625,8 +1818,8 @@ oracle   soft   nproc    	2047
 oracle   hard   nproc    	16384
 oracle   soft   stack   	10240
 EOF
-		
-	
+
+
 
 		#sed -i "/.*pam_limits.so/ d" /etc/pam.d/login;
 		#cat >>/etc/pam.d/login<<EOF
@@ -1649,7 +1842,7 @@ EOF
 		unzip linux.x64_11gR2_database_1of2.zip -d /stage/
 		unzip linux.x64_11gR2_database_2of2.zip -d /stage/
 
-		
+
 		# Install required packages:
 		yum install -y binutils.x86_64 compat-libcap1.x86_64 gcc.x86_64 gcc-c++.x86_64 glibc.i686 glibc.x86_64 glibc-devel.i686 glibc-devel.x86_64 ksh compat-libstdc++-33 libaio.i686 libaio.x86_64 libaio-devel.i686 libaio-devel.x86_64 libgcc.i686 libgcc.x86_64 libstdc++.i686 libstdc++.x86_64 libstdc++-devel.i686 libstdc++-devel.x86_64 libXi.i686 libXi.x86_64 libXtst.i686 libXtst.x86_64 make.x86_64 sysstat.x86_64  glibc-headers  unixODBC unixODBC-devel  zlib-devel elfutils-libelf-devel elfutils-libelf-devel-static numactl-devel pcre-devel;
 
@@ -1727,7 +1920,7 @@ oracle.install.db.config.starterdb.password.ALL=$oracle_password
 SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 DECLINE_SECURITY_UPDATES=true
 EOF
-		
+
 		chown -R oracle:oinstall /stage/
 		chmod -R ug+rwx /stage/
 
@@ -1737,7 +1930,7 @@ EOF
    		chown -R oracle:oinstall /etc/oracle;
    		chmod -R ug+rwx /etc/oracle;
 		echo "Install is in progress,please wait...";
-		
+
 
 		RUN_INSTALL=$(expect -c "
 			set timeout -1;
@@ -1746,7 +1939,7 @@ EOF
 			expect eof
 			exit
 		");
-		
+
 		echo "$RUN_INSTALL"
 
 		logfile=$(echo "$RUN_INSTALL" |grep -w "$oracle_dir/oraInventory/logs/installActions[[:graph:]]*.log" |awk -v oracle_dir=$oracle_dir 'NR==1{print substr($0,index($0,oracle_dir),index($0,".log")-index($0,oracle_dir) + 4)}');
@@ -1761,14 +1954,14 @@ EOF
 				expect \"Shutdown Oracle Database 11g Release 2 Installer\"
 				expect eof
 				exit
-			");	
+			");
 			echo $INSTALL_LOG;
 
 			echo "Install finish."
 
 			if [[ -f "$oracle_dir/oraInventory/orainstRoot.sh" ]]; then
 				$oracle_dir/oraInventory/orainstRoot.sh
-			fi	
+			fi
 			if [[ -f "$oracle_dir/db_base/db_home/root.sh" ]]; then
 				$oracle_dir/db_base/db_home/root.sh;
 			fi
@@ -1921,7 +2114,7 @@ ORACLE_SID=$oracle_sid
 EOF
 			chown -R oracle:dba /etc/sysconfig/oracledb
 			chmod ug+rwx /etc/sysconfig/oracledb
-			
+
 			rm -rf /usr/lib/systemd/system/oracledb.service;
 			cat >>/usr/lib/systemd/system/oracledb.service<<EOF
 [Unit]
@@ -1948,7 +2141,7 @@ EOF
 
 			chown -R oracle:dba $oracle_dir;
 			chmod -R ug+rwx $oracle_dir;
-			
+
 			setenforce 1;
 
 			# 启动服务
@@ -1970,7 +2163,7 @@ EOF
 	fi
 }
 
-function install_cobbler() 
+function install_cobbler()
 {
 	if [[ $o_cobbler_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "cobblerd") -eq 0 ]]; then
 
@@ -2002,7 +2195,7 @@ function install_cobbler()
 		# proto=http
 		# proxy=http://proxy.local:8888
 		# outpath=/var/www/repos/ubuntu
-		# 
+		#
 		# debmirror       -a $arch \
 		#                 --no-source \
 		#                 -s $section \
@@ -2029,7 +2222,7 @@ function install_cobbler()
 		sed -i "s/^manage_dhcp:.*/manage_dhcp:\ 1/" /etc/cobbler/settings;
 		sed -i "s/option routers[[:space:]]*.*/option routers\             $serverip;/" /etc/cobbler/dhcp.template;
 		sed -i "s/disable[[:space:]]*=[[:space:]]*yes/disable\			=\ no/" /etc/xinetd.d/tftp;
-		
+
 		# Selinux
 		mkdir -p /var/lib/cobbler/policy;
 		rm -rf /var/lib/cobbler/policy/cobbler-web.te
@@ -2048,10 +2241,10 @@ EOF
 		semodule -i cobbler-web.pp
 		cd $cur_path;
 
-		
+
 
 		# 暂时关闭Selinux
-		setenforce 0;		
+		setenforce 0;
 		# Firewall
 		# /etc/sysconfig/iptables
 		# -A INPUT -m state --state NEW -m udp -p udp -m udp --dport 69 -j ACCEPT
@@ -2173,7 +2366,7 @@ EOF
 		cobbler system add --name=CentOS7 --profile=CentOS7
 		cobbler sync;
 
-		# 开启Selinux 
+		# 开启Selinux
 		setenforce 1;
 
 		# 设置权限
@@ -2194,7 +2387,7 @@ EOF
 
 		semanage fcontext -a -t dhcp_etc_t "/etc/dhcp(/.*)?";
 		restorecon -R -v /etc/dhcp;
-		
+
 		semanage fcontext -a -t public_content_rw_t "/var/lib/cobbler(/.*)?";
 		restorecon -R -v /var/lib/cobbler;
 
@@ -2212,7 +2405,7 @@ EOF
 	fi
 }
 
-function install_weblogic12() 
+function install_weblogic12()
 {
 	if [[ $o_weblogic_state -eq 1 || $1 -eq 1  ]] && [[ $(service_test "weblogicd") -eq 0 ]]; then
 
@@ -2252,7 +2445,7 @@ function install_weblogic12()
 		cat >>/etc/profile<<EOF
 export MW_HOME=$MW_HOME
 EOF
-		
+
 
 		rm -rf /home/weblogic/.bash_profile;
 		cat >>/home/weblogic/.bash_profile<<EOF
@@ -2300,7 +2493,7 @@ write domain to "$DOMAIN_HOME";
 close template;
 
 EOF
-		
+
 		rm -rf $ORACLE_BASE;
 
 		mkdir -p $MW_HOME;
@@ -2312,12 +2505,12 @@ EOF
 
 		chown -R weblogic:bea $ORACLE_BASE
 		chmod -R ug+rwx $ORACLE_BASE
-		
+
 		rm -rf /tmp/OraInstall*
-		rm -rf /etc/oraInst.loc 
+		rm -rf /etc/oraInst.loc
 
 		source /etc/profile
-		
+
 		echo "Weblogic installing,Please wait..."
 
 		RUN_INSTALL=$(expect -c "
@@ -2327,7 +2520,7 @@ EOF
 			expect eof
 			exit
 		");
-		
+
 		echo "$RUN_INSTALL"
 
 		if [[ $(echo "$RUN_INSTALL" | grep "The installation of Oracle Fusion Middleware 12c WebLogic and Coherence Developer 12.2.1.2.0 completed successfully"|wc -l) -eq 1 ]]; then
@@ -2340,7 +2533,7 @@ EOF
 				expect \"succeed: close template\"
 				expect eof
 				exit
-			");	
+			");
 
 			echo "$RUN_INSTALL"
 
@@ -2388,12 +2581,12 @@ case "\$1" in
 	    if [[ \$USER = \$DOMAIN_OWNER ]]; then
 	    	sh \$DOMAIN_HOME/bin/stopWebLogic.sh >> \$DOMAIN_LOG
 	    else
-	    	su - \$DOMAIN_OWNER -c "sh \$DOMAIN_HOME/bin/stopWebLogic.sh >> \$DOMAIN_LOG"	
+	    	su - \$DOMAIN_OWNER -c "sh \$DOMAIN_HOME/bin/stopWebLogic.sh >> \$DOMAIN_LOG"
 	    fi
-	    
+
 	    PIDS=\$(ps -ax |grep "java.*weblogic"|grep -v "grep" |awk '{print \$1}')
-		for pid in \$PIDS  
-		do  
+		for pid in \$PIDS
+		do
 	    	kill -9 \$pid 2>/dev/null
 		done
 	    echo " OK"
@@ -2410,7 +2603,7 @@ case "\$1" in
 exit 0
 
 EOF
-				
+
 				site_home=/var/www/weblogic/localhost
 				if [[ -n "$host_name" ]]; then
 					site_home=/var/www/weblogic/$host_name
@@ -2508,9 +2701,9 @@ EOF
 </weblogic-web-app>
 EOF
 
-				
 
-				
+
+
 				chown -R weblogic:bea $site_home
 				chmod -R ug+rw $site_home
 
@@ -2535,7 +2728,7 @@ EOF
 				chmod -R ug+rwx $DOMAIN_HOME
 
 				# 添加防火墙
-				firewall-cmd --permanent --zone=public --add-port=7001/tcp;	
+				firewall-cmd --permanent --zone=public --add-port=7001/tcp;
 				firewall-cmd --permanent --zone=public --add-port=7002/tcp;
 				firewall-cmd --reload;
 				semanage port -a -t http_port_t -p tcp 7001;
@@ -2569,7 +2762,7 @@ EOF
 	fi
 }
 
-function install_gitlab() 
+function install_gitlab()
 {
 	# http://blog.wengyingjian.com/2016/02/08/server-gitlab-init/
 	if [[ $o_gitlab_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "gitlab-runsvdir") -eq 0 ]]; then
@@ -2611,7 +2804,7 @@ function install_gitlab()
 			semanage port -a -t http_port_t -p tcp $gitlab_port;
 		fi
 
-		
+
 		gitlab-ctl reconfigure;
 		systemctl restart gitlab-runsvdir.service
 
@@ -2647,12 +2840,12 @@ ExecStop=/usr/bin/vncserver -kill :1
 [Install]
 WantedBy=multi-user.target
 EOF
-	
+
 	systemctl enable vncserver@:1.service
 
 }
 
-function install_kvm() 
+function install_kvm()
 {
 	# 参考
 	# http://www.tuicool.com/articles/3YjEzm
@@ -2669,10 +2862,10 @@ function install_kvm()
 			echo "Your system does not support virtualization !";
 			exit 0;
 		fi
-		
+
 
 		# 安装组件
-		yum install -y kvm python-virtinst libvirt virt-install bridge-utils virt-manager qemu-kvm-tools  virt-viewer  virt-v2v libguestfs-tools 
+		yum install -y kvm python-virtinst libvirt virt-install bridge-utils virt-manager qemu-kvm-tools  virt-viewer  virt-v2v libguestfs-tools
 		systemctl enable libvirtd.service
 		systemctl restart libvirtd.service
 
@@ -2690,18 +2883,18 @@ TYPE=Bridge
 ONBOOT=yes
 NM_CONTROLLED=no
 EOF
-			
+
 			if [[ -n "$uuid" ]]; then
-				echo "UUID=\"$uuid\"" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+				echo "UUID=\"$uuid\"" >> /etc/sysconfig/network-scripts/ifcfg-br0
 			fi
 
-			if [[ -n "$macaddr" ]]; then	
-				echo "HWADDR=$macaddr" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			if [[ -n "$macaddr" ]]; then
+				echo "HWADDR=$macaddr" >> /etc/sysconfig/network-scripts/ifcfg-br0
 			fi
 
 			#if [ "$bootproto" = "dhcp" ]; then
 
-			#	echo "BOOTPROTO=dhcp" >> /etc/sysconfig/network-scripts/ifcfg-br0 
+			#	echo "BOOTPROTO=dhcp" >> /etc/sysconfig/network-scripts/ifcfg-br0
 			#else
 				cat >>/etc/sysconfig/network-scripts/ifcfg-br0 <<EOF
 BOOTPROTO=none
@@ -2724,20 +2917,20 @@ EOF
 			echo "Network bridge setup success."
 
 			need_boot="yes"
-			printf "Do you like to reboot your system,Yes or no:[yes]\n"	
+			printf "Do you like to reboot your system,Yes or no:[yes]\n"
 			read tmp;
 			if [[ -n "$tmp" ]]; then
 				need_boot="$tmp";
 			fi
-			
+
 			if [ $need_boot="yes" ]; then
 				reboot;
 			else
 				systemctl restart network.service;
 			fi
 		fi
-		
-		
+
+
 		# 允许网络请求转发
 		sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
 		sed -i "$ a net.ipv4.ip_forward = 1" /etc/sysctl.conf
@@ -2756,7 +2949,7 @@ EOF
 		vncpass='qingfeng***2016'
 		firewall-cmd --permanent --zone=public --add-port=$vncport/tcp;
 		firewall-cmd --reload;
-		semanage port -a -t vnc_port_t -p tcp $vncport; 
+		semanage port -a -t vnc_port_t -p tcp $vncport;
 		setsebool -P virt_use_samba 1
 		setsebool -P virt_use_nfs 1
 		# semanage fcontext -l | grep virt_image_t
@@ -2774,7 +2967,7 @@ EOF
 		#virsh console CentOS7-x86_64
 
 		# virsh list --all
-		# virsh destroy CentOS7-x86_64  
+		# virsh destroy CentOS7-x86_64
 		# virsh undefine CentOS7-x86_64
 		# rm -rf /data/kvm/disk03.img
 		# 打开图形界面，在终端选择 kconsole ，并且打开 virt-manager 工具
@@ -2784,7 +2977,7 @@ EOF
  		# virsh reboot CentOS7-x86_64 （重启）
 		# virsh start CentOS7-x86_64   （启动）
 		# virsh suspend CentOS7-x86_64  挂起
-		
+
 		# virsh
 		#    attach-disk CentOS7-x86_64 /data/iso/CentOS-7-x86_64-DVD-1511.iso hda --driver file --type cdrom --mode readonly
 
@@ -2810,21 +3003,21 @@ EOF
 	fi
 }
 
-function mask_to_prefix() 
-{  
+function mask_to_prefix()
+{
 	yum install -y bc > /dev/null 2>&1;
-    mask=${1}  
-	prefix_cnt=0  
-	prefix=""  
-	local mask_list=($(echo ${mask} | awk -F . '{print $1,$2,$3,$4}')) 
-    local mask_cnt=${#mask_list[*]}  
-    mask_cnt=$((${mask_cnt} - 1))  
-    for i in `seq 0 ${mask_cnt}`  
-    do  
-            tmp=$(echo "obase=2;ibase=10;${mask_list[$i]}" | bc)  
-            prefix="${prefix}${tmp}"  
-    done  
-    prefix_cnt=$(echo ${prefix} | grep -o 1 | wc -l)  
+    mask=${1}
+	prefix_cnt=0
+	prefix=""
+	local mask_list=($(echo ${mask} | awk -F . '{print $1,$2,$3,$4}'))
+    local mask_cnt=${#mask_list[*]}
+    mask_cnt=$((${mask_cnt} - 1))
+    for i in `seq 0 ${mask_cnt}`
+    do
+            tmp=$(echo "obase=2;ibase=10;${mask_list[$i]}" | bc)
+            prefix="${prefix}${tmp}"
+    done
+    prefix_cnt=$(echo ${prefix} | grep -o 1 | wc -l)
     echo $prefix_cnt
 }
 
@@ -2890,12 +3083,12 @@ EOF
 		# 启动服务
 		systemctl daemon-reload;
 		systemctl enable config-route.service;
-	    
+
 		echo "Config route for server success."
 	fi
 }
 
-function nat-forward() 
+function nat-forward()
 {
 	if [[ $(service_test "nat-forwardcd") -eq 0 ]]; then
 		rm -rf /etc/nat-forward.sh
@@ -2940,11 +3133,11 @@ do
             to_port=\${to_port/-/:}
 
             #echo "from ip:\$from_ip, from_port:\$from_port, to_ip:\$to_ip, to_port:\$to_port"
-            
+
 
             cmd=\${cmd}"\niptables -t nat     -D POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip > /dev/null 2>&1"
             cmd=\${cmd}"\niptables -t nat     -D PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\${to_port/:/-} > /dev/null 2>&1;"
-            cmd=\${cmd}"\niptables -D FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp > /dev/null 2>&1;" 
+            cmd=\${cmd}"\niptables -D FORWARD -d \$to_ip/32    -p tcp  -m state     --dport \$to_port   -j ACCEPT  --state NEW -m tcp > /dev/null 2>&1;"
 
             cmd=\${cmd}"\niptables -t nat     -A POSTROUTING   -p tcp  -s \$to_ip   --sport \$to_port   -j SNAT    --to \$from_ip"
             cmd=\${cmd}"\niptables -t nat     -A PREROUTING    -p tcp  -d \$from_ip --dport \$from_port -j DNAT    --to \$to_ip:\${to_port/:/-}"
@@ -2953,13 +3146,13 @@ do
 done < \$file
 
 
-if [[ -n "\$cmd" ]]; then        
+if [[ -n "\$cmd" ]]; then
     #echo -e "\$cmd"
     echo -e \$cmd | while read line
     do
         echo "\$line"
        	eval "\$line"
-    done 
+    done
 fi
 
 echo "OK"
@@ -2990,11 +3183,11 @@ EOF
 
 	if [[ -n "$options" ]]; then
 		from=$(echo $options |awk -F - '{print $1}')
-		to=$(echo $options |awk -F - '{print $2}') 
+		to=$(echo $options |awk -F - '{print $2}')
 		if [[ $(echo $from |grep ":" |wc -l) -eq 0 ]]; then
 			from="$serverip:$from"
 		fi
-	
+
 		local file="/etc/sysconfig/nat-tables"
 		if [[ -f "$file"  ]]; then
 			rm -rf $file.bak
