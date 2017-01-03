@@ -69,8 +69,8 @@ source /etc/profile
 
 if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "1.8" | wc -l) -eq 0 ]]; then
 	 #wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
-	 if [[ ! -f "jdk-8u102-linux-x64.tar.gz" ]]; then
-	 	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u102-linux-x64.tar.gz
+	 if [[ ! -f "jdk-8u111-linux-x64.tar.gz" ]]; then
+	 	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u111-linux-x64.tar.gz
 	 fi
 
 	 # wget --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.rpm
@@ -84,9 +84,10 @@ if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "1.8" 
 	# curl can be used in place of wget.
 
 
-	tar xzvf ./jdk-8u102-linux-x64.tar.gz -C /var/local;
+	tar xzvf ./jdk-8u111-linux-x64.tar.gz -C /var/local;
 
-	ln -s /var/local/jdk1.8.0_102 /var/local/jdk;
+  rm -rf /var/local/jdk
+	ln -s /var/local/jdk1.8.0_111 /var/local/jdk;
 
 	#rm -rf ./jdk-8u102-linux-x64.tar.gz;
 
@@ -1013,6 +1014,7 @@ dirmessage_enable=YES
 xferlog_enable=YES
 connect_from_port_20=YES
 nopriv_user=vsftpd
+allow_writeable_chroot=YES
 chroot_local_user=YES
 secure_chroot_dir=/var/run/vsftpd
 pam_service_name=vsftpd
@@ -1040,6 +1042,7 @@ EOF
 		rm -rf /etc/vsftpd/vsftpd_user_conf/$ftp_username
 		cat >>/etc/vsftpd/vsftpd_user_conf/$ftp_username<<EOF
 write_enable=YES
+allow_writeable_chroot=YES
 anon_world_readable_only=NO
 anon_upload_enable=YES
 anon_mkdir_write_enable=YES
@@ -1272,17 +1275,17 @@ function install_tomcat()
 		input_host_name;
 
 		# 下载解压文件
-		if [[ ! -f "apache-tomcat-8.5.8.tar.gz" ]]; then
-			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.8/bin/apache-tomcat-8.5.8.tar.gz;
+		if [[ ! -f "apache-tomcat-8.5.9.tar.gz" ]]; then
+			wget -c http://mirror.bit.edu.cn/apache/tomcat/tomcat-8/v8.5.9/bin/apache-tomcat-8.5.9.tar.gz;
 		fi
 
-		rm -rf /var/local/apache-tomcat-8.5.8;
+		rm -rf /var/local/apache-tomcat-8.5.9;
 		rm -rf /var/local/tomcat;
 
-		tar xzvf ./apache-tomcat-8.5.8.tar.gz -C /var/local;
-		ln -s /var/local/apache-tomcat-8.5.8 /var/local/tomcat;
+		tar xzvf ./apache-tomcat-8.5.9.tar.gz -C /var/local;
+		ln -s /var/local/apache-tomcat-8.5.9 /var/local/tomcat;
 
-		#rm -rf ./apache-tomcat-8.5.8.tar.gz;
+		#rm -rf ./apache-tomcat-8.5.9.tar.gz;
 
 		# 添加防火墙
 		firewall-cmd --permanent --zone=public --add-port=8080/tcp;
@@ -1305,8 +1308,8 @@ function install_tomcat()
 		getent group tomcat || groupadd -r tomcat;
 		getent passwd tomcat || useradd -r -d $TOMCAT_HOME -s /bin/nologin -g tomcat tomcat;
 		chown -R tomcat:tomcat $TOMCAT_HOME;
-		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.8;
-		chmod -R ug+rwx /var/local/apache-tomcat-8.5.8;
+		chown -R tomcat:tomcat /var/local/apache-tomcat-8.5.9;
+		chmod -R ug+rwx /var/local/apache-tomcat-8.5.9;
 
 
 		cat >>$TOMCAT_HOME/bin/setenv.sh<<EOF
