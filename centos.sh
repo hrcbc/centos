@@ -23,9 +23,13 @@ USAGE="
  	--oracle-password   	Specify the super user‘s password
  	--weblogic-password		Specify the Weblogic console user‘s password
  	--gitlab-port 			Define gitlab visit port,default 80
- 	--mysql-password		Specify mysql root user's password
- 	--config-route			Automatically configure the  IP routing for multi network interfaces
- 	--nat-forward			Configure nat port forwarding
+ 	--mysql-password		  Specify mysql root user's password
+  --vpn-username        VPN login user name
+  --vpn-password        VPN login password
+  --vpn-cert-password   Specifies the password for generate the client certificate
+  --shared-secret
+ 	--config-route			  Automatically configure the  IP routing for multi network interfaces
+ 	--nat-forward			    Configure nat port forwarding
  	--skip-update
 ";
 
@@ -142,7 +146,14 @@ ftp_password='guoliang.xie';
 # Mysql
 mysql_root_password='guoliang.xie'
 
-ARGS=`getopt -o i -u -al skip-update,config-route,nat-forward:,install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:  -- "$@"`
+# VPN
+shared_secret="1ms.im";
+iprange="10.0.1";
+vpn_username="guoliang";
+vpn_password="xgl.1234";
+vpn_cert_password="abcd1234"
+
+ARGS=`getopt -o i -u -al skip-update,config-route,nat-forward:,install:,stop:,start:,ssh-port:,host-name:,http-proxy-tomcat:,oracle-password:,oracle-sid:,weblogic-password:,gitlab-port:,mysql-password:,vpn-username:,vpn-password:,vpn-cert-password:,shared-secret: -- "$@"`
 eval set -- '$ARGS'
 
 while [ -n "$1" ]
@@ -205,6 +216,22 @@ do
 			mysql_root_password="$2";
 			shift 2;;
 
+    --vpn-username)
+			vpn_username="$2";
+			shift 2;;
+
+    --vpn-password)
+			vpn_password="$2";
+			shift 2;;
+
+    --vpn-cert-password)
+			vpn_cert_password="$2";
+  		shift 2;;
+
+    --shared-secret)
+			shared_secret="$2";
+			shift 2;;
+
 		--skip-update)
 			shift;;
 
@@ -253,18 +280,6 @@ hwaddr=$(ip addr show $eth |grep "link/ether" |awk '{print $2}');
 
 ############################# Define variables #############################
 
-# VPN
-o_vpn_state=$(option_test "vpn");
-
-shared_secret="1ms.im";
-iprange="10.0.1";
-vpn_username="guoliang";
-vpn_password="xgl.1234";
-
-# HTTP
-
-
-
 # SVN
 if [[ ! -f "sha1.jar" ]]; then
 	wget -c http://home.guoliang.info/Tools/Scripts/Linux/sha1.jar
@@ -278,6 +293,7 @@ svn_dbuser="svn";
 
 o_mysql_state=$(option_test "mysql");
 o_ftp_state=$(option_test "ftp");
+o_vpn_state=$(option_test "vpn");
 o_http_state=$(option_test "http");
 o_svn_state=$(option_test "svn");
 o_tomcat_state=$(option_test "tomcat");
@@ -768,6 +784,9 @@ function install_strongswan() {
   # http://cache.baiducontent.com/c?m=9f65cb4a8c8507ed4fece763105392230e54f73260878e482a958448e435061e5a3cb0e76c7944538f9061251cab4a5ae0f63d70200357eddd97d65e98e6d27e20c961742d40d35613a358ea981a32c151c41abef80ee6cab061c5f59592&p=907d890f86cc42af53f5c7710f4983&newp=8b2a975b978415c308e2977e060590231610db2151d4d11e6b82c825d7331b001c3bbfb42323140ed6cf796201ae4d57e9f63d7136032ba3dda5c91d9fb4c574799666732470&user=baidu&fm=sc&query=strongswan+freeradius&qid=f9f9019900012e99&p1=6
   # http://www.07net01.com/2016/12/1757328.html
   # https://github.com/philpl/setup-strong-strongswan/blob/master/setup.sh
+  # https://www.vultr.com/docs/using-strongswan-for-ipsec-vpn-on-centos-7
+  # http://zlyang.blog.51cto.com/1196234/1881225/
+  # https://blog.itnmg.net/centos7-ipsec-vpn/
 
   yum install pam-devel openssl-devel make gcc curl tcpdump -y
   dir=$(pwd);
@@ -855,50 +874,42 @@ function install_strongswan() {
 
   ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem  --in client.pub.pem --dn "C=cn, O=GuoLiang, CN=$CN" --outform pem > client.cert.pem
   # 打包证书为 pkcs12
-
-  openssl pkcs12 -export -inkey client.key.pem -in client.cert.pem -name "VPN Client Cert" -certfile ca.cert.pem -caname "$CN VPN CA" -out client.cert.p12
   # 此时会提示输入两次密码, 这个密码是在导入证书到其他系统时需要验证的. 没有这个密码即使别人拿到了证书也没法使用.
 
-  exit;
+  EXPORT_P12=$(expect -c "
+    set timeout -1
+    spawn openssl pkcs12 -export -inkey client.pem -in client.cert.pem -name \"VPN Client Cert\" -certfile ca.cert.pem -caname \"$CN VPN CA\" -out client.cert.p12
+    expect \"Enter Export Password:\"
+    send \"$vpn_cert_password\r\"
 
+    expect \"Enter Export Password:\"
+    send \"$vpn_cert_password\r\"
 
+    expect eof
+  ");
 
+  echo "$EXPORT_P12"
 
+  cp -r ca.pem /etc/strongswan/ipsec.d/private/
+  cp -r server.pem /etc/strongswan/ipsec.d/private/
+  cp -r client.pem /etc/strongswan/ipsec.d/private/
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-  cp -r ca.key.pem /etc/strongswan/ipsec.d/private/
   cp -r ca.cert.pem /etc/strongswan/ipsec.d/cacerts/
   cp -r server.cert.pem /etc/strongswan/ipsec.d/certs/
   cp -r server.pub.pem /etc/strongswan/ipsec.d/certs/
-  cp -r server.key.pem /etc/strongswan/ipsec.d/private/
-  #cp -r client.cert.pem /etc/strongswan/ipsec.d/certs/
-  #cp -r client.key.pem /etc/strongswan/ipsec.d/private/
+  cp -r client.cert.pem /etc/strongswan/ipsec.d/certs/
 
   rm -rf /etc/strongswan/ipsec.conf;
   cat >>/etc/strongswan/ipsec.conf<<EOF
 config setup
     uniqueids=never
     charondebug="cfg 2, dmn 2, ike 2, net 0"
-
 conn %default
     left=%defaultroute
     leftsubnet=0.0.0.0/0
     leftcert=server.cert.pem
     right=%any
-    rightsourceip=$iprange.100/16
+    rightsourceip=$iprange.0/24
 
 conn CiscoIPSec
     keyexchange=ikev1
@@ -932,35 +943,108 @@ conn IpsecIKEv2-EAP
     rightauth=eap-mschapv2
     eap_identity=%any
     auto=add
+
+#conn iOS_cert
+#    keyexchange=ikev1
+#    fragmentation=yes
+#    left=%defaultroute
+#    leftauth=pubkey
+#    leftsubnet=0.0.0.0/0
+#    leftcert=server.cert.pem
+#    right=%any
+#    rightauth=pubkey
+#    rightauth2=xauth
+#    rightsourceip=$iprange.0/24
+#    rightcert=client.cert.pem
+#    auto=add
+#
+#conn android_xauth_psk
+#    keyexchange=ikev1
+#    left=%defaultroute
+#    leftauth=psk
+#    leftsubnet=0.0.0.0/0
+#    right=%any
+#    rightauth=psk
+#    rightauth2=xauth
+#    rightsourceip=$iprange.0/24
+#    auto=add
+#
+#conn networkmanager-strongswan
+#    keyexchange=ikev2
+#    left=%defaultroute
+#    leftauth=pubkey
+#    leftsubnet=0.0.0.0/0
+#    leftcert=server.cert.pem
+#    right=%any
+#    rightauth=pubkey
+#    rightsourceip=$iprange.0/24
+#    rightcert=client.cert.pem
+#    auto=add
+#
+#conn ios_ikev2
+#    keyexchange=ikev2
+#    ike=aes256-sha256-modp2048,3des-sha1-modp2048,aes256-sha1-modp2048!
+#    esp=aes256-sha256,3des-sha1,aes256-sha1!
+#    rekey=no
+#    left=%defaultroute
+#    leftid=$serverip
+#    leftsendcert=always
+#    leftsubnet=0.0.0.0/0
+#    leftcert=server.cert.pem
+#    right=%any
+#    rightauth=eap-mschapv2
+#    rightsourceip=$iprange.0/24
+#    rightsendcert=never
+#    eap_identity=%any
+#    dpdaction=clear
+#    fragmentation=yes
+#    auto=add
+#
+#conn windows7
+#    keyexchange=ikev2
+#    ike=aes256-sha1-modp1024!
+#    rekey=no
+#    left=%defaultroute
+#    leftauth=pubkey
+#    leftsubnet=0.0.0.0/0
+#    leftcert=server.cert.pem
+#    right=%any
+#    rightauth=eap-mschapv2
+#    rightsourceip=$iprange.0/24
+#    rightsendcert=never
+#    eap_identity=%any
+#    auto=add
 EOF
 
   rm -rf /etc/strongswan/strongswan.conf
   cat >>/etc/strongswan/strongswan.conf<<EOF
 charon {
-    load_modular = yes
-    duplicheck.enable = no
-    compress = yes
-    plugins {
-            include strongswan.d/charon/*.conf
-    }
-    dns1 = 8.8.8.8
-    dns2 = 8.8.4.4
-    nbns1 = 8.8.8.8
-    nbns2 = 8.8.4.4
+      load_modular = yes
+      duplicheck.enable = no
+      compress = yes
+      plugins {
+              include strongswan.d/charon/*.conf
+      }
+      dns1 = 114.114.114.114
+      dns2 = 8.8.8.8
+      nbns1 = 8.8.8.8
+      nbns2 = 8.8.4.4
 }
-
 include strongswan.d/*.conf
 EOF
 
   rm -rf /etc/strongswan/ipsec.secrets
   cat>>/etc/strongswan/ipsec.secrets<<EOF
-: RSA server.key.pem
+: RSA server.pem
 : PSK "$shared_secret"
 $vpn_username : EAP "$vpn_password"
 $vpn_username : XAUTH "$vpn_password"
 EOF
 
   # 开启内核转发
+  sysctl -w net.ipv4.ip_forward=1
+  sysctl -w net.ipv6.conf.all.forwarding=1
+
   sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
   sed -i "/net.ipv6.conf.all.forwarding/d" /etc/sysctl.conf
 
@@ -981,12 +1065,23 @@ EOF
 
 #  firewall-cmd --reload;
 #  firewall-cmd --permanen --add-service=strongswan
-#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" masquerade'
-#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="4500" protocol="udp" to-port="4500"'
-#  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="10.1.0.0/16" forward-port port="500" protocol="udp" to-port="500"'
+
   firewall-cmd --permanent --add-service="ipsec"
+  firewall-cmd --permanent --add-port=500/tcp
+  firewall-cmd --permanent --add-port=500/udp
+  firewall-cmd --permanent --add-port=1723/tcp
+  firewall-cmd --permanent --add-port=500/udp
   firewall-cmd --permanent --add-port=4500/udp
+  firewall-cmd --permanent --add-port=1701/udp
   firewall-cmd --permanent --add-masquerade
+  firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
+  firewall-cmd --permanent --add-rich-rule='rule protocol value="ah" accept'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" masquerade'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="4500" protocol="udp" to-port="4500"'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1701" protocol="udp" to-port="1701"'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="tcp" to-port="500"'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="udp" to-port="500"'
+  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1723" protocol="tcp" to-port="1723"'
   firewall-cmd --reload;
   # 对应iptables配置
   # 开放端口
