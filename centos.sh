@@ -762,9 +762,44 @@ EOF
 }
 
 function install_strongswan() {
-  # running a strongswan server with radius on your VPS
+
+  # 参考
   # https://www.kiritostudio.com/running-a-strongswan-server-with-radius-on-your-vps/
-  yum install strongswan openssl;
+  # http://cache.baiducontent.com/c?m=9f65cb4a8c8507ed4fece763105392230e54f73260878e482a958448e435061e5a3cb0e76c7944538f9061251cab4a5ae0f63d70200357eddd97d65e98e6d27e20c961742d40d35613a358ea981a32c151c41abef80ee6cab061c5f59592&p=907d890f86cc42af53f5c7710f4983&newp=8b2a975b978415c308e2977e060590231610db2151d4d11e6b82c825d7331b001c3bbfb42323140ed6cf796201ae4d57e9f63d7136032ba3dda5c91d9fb4c574799666732470&user=baidu&fm=sc&query=strongswan+freeradius&qid=f9f9019900012e99&p1=6
+  # http://www.07net01.com/2016/12/1757328.html
+  # https://github.com/philpl/setup-strong-strongswan/blob/master/setup.sh
+
+  yum install pam-devel openssl-devel make gcc curl tcpdump -y
+  dir=$(pwd);
+  rm -rf strongswan
+  mkdir strongswan
+  curl -sS "http://xieguoliang.com/downloads/strongswan-5.5.1.tar.gz" | tar -zvxC strongswan --strip-components 1
+  cd strongswan
+  ./configure --prefix=/usr --sysconfdir=/etc/strongswan \
+    --enable-eap-identity \
+    --enable-eap-md5 \
+    --enable-eap-mschapv2 \
+    --enable-eap-tls \
+    --enable-eap-ttls \
+    --enable-eap-peap \
+    --enable-eap-tnc \
+    --enable-eap-dynamic \
+    --enable-eap-radius \
+    --enable-xauth-eap  \
+    --enable-xauth-pam  \
+    --enable-dhcp \
+    --enable-openssl \
+    --enable-addrblock \
+    --enable-unity \
+    --enable-certexpire \
+    --enable-radattr \
+    --enable-swanctl \
+    --enable-openssl \
+    --disable-gmp
+
+  make && make install
+
+  cd $dir;
 
   input_host_name;
   CN="$host_name";
@@ -774,7 +809,7 @@ function install_strongswan() {
 
   # 生成证书
   # 1. 生成一个私钥：
-  strongswan pki --gen --type rsa --size 4096 --outform pem > ca.key.pem
+  ipsec pki --gen --outform pem > ca.pem
 
   # 2. 基于这个私钥自己签一个 CA 根证书
   # –self 表示自签证书
@@ -786,18 +821,17 @@ function install_strongswan() {
   #   CN 友好显示的通用名
   # –ca 表示生成 CA 根证书
   # –lifetime 为有效期, 单位是天
-  strongswan pki --self --in ca.key.pem --dn "C=CN, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem > ca.cert.pem
+  ipsec pki --self --in ca.pem --dn "C=cn, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem >ca.cert.pem
 
   # 生成服务器端证书
   # 1. 同样先生成一个私钥
-  strongswan pki --gen --type rsa --size 2048 --outform pem > server.key.pem
+  ipsec pki --gen --outform pem > server.pem
 
   # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
   # 从私钥生成公钥
-  strongswan pki --pub --in server.key.pem --type rsa --outform pem > server.pub.pem
+  ipsec pki --pub --in server.pem --outform pem > server.pub.pem
 
   # 用刚生成的公钥生成服务器证书
-  strongswan pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.key.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=$CN" --san="$CN" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
   # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
   # –dn, –san，–flag 是一些客户端方面的特殊要求：
 
@@ -805,25 +839,44 @@ function install_strongswan() {
   # Windows 7 不但要求了上面，还要求必须显式说明这个服务器证书的用途（用于与服务器进行认证），–flag serverAuth;
   # 非 iOS 的 Mac OS X 要求了“IP 安全网络密钥互换居间（IP Security IKE Intermediate）”这种增强型密钥用法（EKU），–flag ikdeIntermediate;
   # Android 和 iOS 都要求服务器别名（serverAltName）就是服务器的 URL 或 IP 地址，–san。
+  ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=$CN" --san="$CN" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
 
   # 生成客户端证书(可选)
 
   # 客户端证书是在启用客户端证书验证的时候, 用于验证客户端用户身份的. 每个用户一个证书. 如果需要很高的安全性, 可以用客户端证书, 一般情况下, 不需要使用.
   # 1. 依然是生成私钥：
-
-  #strongswan pki --gen --outform pem > client.key.pem
+  ipsec pki --gen --outform pem > client.pem
 
   # 2. 然后用刚才自签的 CA 证书来签客户端证书：
   # 从私钥生成公钥
-  #strongswan pki --pub --in client.key.pem --outform pem > client.pub.pem
+  ipsec pki --pub --in client.pem  --outform pem > client.pub.pem
 
   # 这里就不需要上面那一堆特殊参数了
 
-  #strongswan pki --issue --lifetime 1200 --cacert ca.cert.pem --cakey ca.key.pem --in client.pub.pem --dn "C=CN, O=GuoLiang, CN=us.1ms.im" --outform pem > client.cert.pem
+  ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem  --in client.pub.pem --dn "C=cn, O=GuoLiang, CN=$CN" --outform pem > client.cert.pem
   # 打包证书为 pkcs12
 
-  #openssl pkcs12 -export -inkey client.key.pem -in client.cert.pem -name "GuoLiang Client Cert" -certfile ca.cert.pem -caname "ITnmg StrongSwan CA" -out client.cert.p12
+  openssl pkcs12 -export -inkey client.key.pem -in client.cert.pem -name "VPN Client Cert" -certfile ca.cert.pem -caname "$CN VPN CA" -out client.cert.p12
   # 此时会提示输入两次密码, 这个密码是在导入证书到其他系统时需要验证的. 没有这个密码即使别人拿到了证书也没法使用.
+
+  exit;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
   cp -r ca.key.pem /etc/strongswan/ipsec.d/private/
@@ -1011,7 +1064,7 @@ connect_from_port_20=YES
 nopriv_user=vsftpd
 allow_writeable_chroot=YES
 chroot_local_user=YES
-secure_chroot_dir=/var/run/vsftpd
+#secure_chroot_dir=/var/run/vsftpd
 pam_service_name=vsftpd
 rsa_cert_file=/etc/ssl/certs/vsftpd.pem
 guest_enable=YES
@@ -1043,6 +1096,7 @@ anon_upload_enable=YES
 anon_mkdir_write_enable=YES
 anon_other_write_enable=YES
 local_root=/
+guest_username=apache
 EOF
 
 
