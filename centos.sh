@@ -74,7 +74,7 @@ source /etc/profile
 if [[ $(command_test "java") -eq 0 ]] || [[ $(java -version 2>&1 |grep -w "1.8" | wc -l) -eq 0 ]]; then
 	 #wget -N --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.tar.gz
 	 if [[ ! -f "jdk-8u111-linux-x64.tar.gz" ]]; then
-	 	wget -c http://home.guoliang.info/Tools/Programming/Java/jdk-8u111-linux-x64.tar.gz
+	 	wget -c http://xieguoliang.com/downloads/jdk-8u111-linux-x64.tar.gz
 	 fi
 
 	 # wget --no-check-certificate --no-cookies --header "Cookie: oraclelicense=accept-securebackup-cookie" http://download.oracle.com/otn-pub/java/jdk/8u102-b14/jdk-8u102-linux-x64.rpm
@@ -282,7 +282,7 @@ hwaddr=$(ip addr show $eth |grep "link/ether" |awk '{print $2}');
 
 # SVN
 if [[ ! -f "sha1.jar" ]]; then
-	wget -c http://home.guoliang.info/Tools/Scripts/Linux/sha1.jar
+	wget -c http://xieguoliang.com/downloads/sha1.jar
 fi
 
 mysql_svn_password=$(cat /dev/urandom | head -n 10 | md5sum | head -c 10);
@@ -787,6 +787,7 @@ function install_strongswan() {
   # https://www.vultr.com/docs/using-strongswan-for-ipsec-vpn-on-centos-7
   # http://zlyang.blog.51cto.com/1196234/1881225/
   # https://blog.itnmg.net/centos7-ipsec-vpn/
+  # https://wbuntu.com/?p=323
 
   yum install pam-devel openssl-devel make gcc curl tcpdump -y
   dir=$(pwd);
@@ -828,7 +829,7 @@ function install_strongswan() {
 
   # 生成证书
   # 1. 生成一个私钥：
-  ipsec pki --gen --outform pem > ca.pem
+  ipsec pki --gen --type rsa --size 4096 --outform pem > ca.pem
 
   # 2. 基于这个私钥自己签一个 CA 根证书
   # –self 表示自签证书
@@ -840,15 +841,15 @@ function install_strongswan() {
   #   CN 友好显示的通用名
   # –ca 表示生成 CA 根证书
   # –lifetime 为有效期, 单位是天
-  ipsec pki --self --in ca.pem --dn "C=cn, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem >ca.cert.pem
+  ipsec pki --self --in ca.pem --dn "C=CN, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem >ca.cert.pem
 
   # 生成服务器端证书
   # 1. 同样先生成一个私钥
-  ipsec pki --gen --outform pem > server.pem
+  ipsec pki --gen --type rsa --size 2048 --outform pem > server.pem
 
   # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
   # 从私钥生成公钥
-  ipsec pki --pub --in server.pem --outform pem > server.pub.pem
+  ipsec pki --pub --in server.pem --type rsa --outform pem > server.pub.pem
 
   # 用刚生成的公钥生成服务器证书
   # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
@@ -864,11 +865,11 @@ function install_strongswan() {
 
   # 客户端证书是在启用客户端证书验证的时候, 用于验证客户端用户身份的. 每个用户一个证书. 如果需要很高的安全性, 可以用客户端证书, 一般情况下, 不需要使用.
   # 1. 依然是生成私钥：
-  ipsec pki --gen --outform pem > client.pem
+  ipsec pki --gen --type rsa --size 2048 --outform pem > client.pem
 
   # 2. 然后用刚才自签的 CA 证书来签客户端证书：
   # 从私钥生成公钥
-  ipsec pki --pub --in client.pem  --outform pem > client.pub.pem
+  ipsec pki --pub --in client.pem --type rsa --outform pem > client.pub.pem
 
   # 这里就不需要上面那一堆特殊参数了
 
@@ -904,116 +905,77 @@ function install_strongswan() {
 config setup
     uniqueids=never
     charondebug="cfg 2, dmn 2, ike 2, net 0"
-conn %default
+
+conn iOS_cert
+    keyexchange=ikev1
+    fragmentation=yes
     left=%defaultroute
+    leftauth=pubkey
     leftsubnet=0.0.0.0/0
     leftcert=server.cert.pem
     right=%any
-    rightsourceip=$iprange.0/24
-
-conn CiscoIPSec
-    keyexchange=ikev1
-    fragmentation=yes
     rightauth=pubkey
     rightauth2=xauth
-    leftsendcert=always
-    rekey=no
+    rightsourceip=$iprange.0/24
+    rightcert=client.cert.pem
     auto=add
 
-conn XauthPsk
+conn android_xauth_psk
     keyexchange=ikev1
+    left=%defaultroute
     leftauth=psk
+    leftsubnet=0.0.0.0/0
+    right=%any
     rightauth=psk
     rightauth2=xauth
+    rightsourceip=$iprange.0/24
     auto=add
 
-conn IpsecIKEv2
+conn networkmanager-strongswan
     keyexchange=ikev2
+    left=%defaultroute
     leftauth=pubkey
+    leftsubnet=0.0.0.0/0
+    leftcert=server.cert.pem
+    right=%any
     rightauth=pubkey
-    leftsendcert=always
+    rightsourceip=$iprange.0/24
+    rightcert=client.cert.pem
     auto=add
 
-conn IpsecIKEv2-EAP
+conn ios_ikev2
+    keyexchange=ikev2
+    ike=aes256-sha256-modp2048,3des-sha1-modp2048,aes256-sha1-modp2048!
+    esp=aes256-sha256,3des-sha1,aes256-sha1!
+    rekey=no
+    left=%defaultroute
+    leftid=$CN
+    leftsendcert=always
+    leftsubnet=0.0.0.0/0
+    leftcert=server.cert.pem
+    right=%any
+    rightauth=eap-mschapv2
+    rightsourceip=$iprange.0/24
+    rightsendcert=never
+    eap_identity=%any
+    dpdaction=clear
+    fragmentation=yes
+    auto=add
+
+conn windows7
     keyexchange=ikev2
     ike=aes256-sha1-modp1024!
     rekey=no
+    left=%defaultroute
     leftauth=pubkey
-    leftsendcert=always
+    leftsubnet=0.0.0.0/0
+    leftcert=server.cert.pem
+    right=%any
     rightauth=eap-mschapv2
+    rightsourceip=$iprange.0/24
+    rightsendcert=never
     eap_identity=%any
     auto=add
-
-#conn iOS_cert
-#    keyexchange=ikev1
-#    fragmentation=yes
-#    left=%defaultroute
-#    leftauth=pubkey
-#    leftsubnet=0.0.0.0/0
-#    leftcert=server.cert.pem
-#    right=%any
-#    rightauth=pubkey
-#    rightauth2=xauth
-#    rightsourceip=$iprange.0/24
-#    rightcert=client.cert.pem
-#    auto=add
-#
-#conn android_xauth_psk
-#    keyexchange=ikev1
-#    left=%defaultroute
-#    leftauth=psk
-#    leftsubnet=0.0.0.0/0
-#    right=%any
-#    rightauth=psk
-#    rightauth2=xauth
-#    rightsourceip=$iprange.0/24
-#    auto=add
-#
-#conn networkmanager-strongswan
-#    keyexchange=ikev2
-#    left=%defaultroute
-#    leftauth=pubkey
-#    leftsubnet=0.0.0.0/0
-#    leftcert=server.cert.pem
-#    right=%any
-#    rightauth=pubkey
-#    rightsourceip=$iprange.0/24
-#    rightcert=client.cert.pem
-#    auto=add
-#
-#conn ios_ikev2
-#    keyexchange=ikev2
-#    ike=aes256-sha256-modp2048,3des-sha1-modp2048,aes256-sha1-modp2048!
-#    esp=aes256-sha256,3des-sha1,aes256-sha1!
-#    rekey=no
-#    left=%defaultroute
-#    leftid=$serverip
-#    leftsendcert=always
-#    leftsubnet=0.0.0.0/0
-#    leftcert=server.cert.pem
-#    right=%any
-#    rightauth=eap-mschapv2
-#    rightsourceip=$iprange.0/24
-#    rightsendcert=never
-#    eap_identity=%any
-#    dpdaction=clear
-#    fragmentation=yes
-#    auto=add
-#
-#conn windows7
-#    keyexchange=ikev2
-#    ike=aes256-sha1-modp1024!
-#    rekey=no
-#    left=%defaultroute
-#    leftauth=pubkey
-#    leftsubnet=0.0.0.0/0
-#    leftcert=server.cert.pem
-#    right=%any
-#    rightauth=eap-mschapv2
-#    rightsourceip=$iprange.0/24
-#    rightsendcert=never
-#    eap_identity=%any
-#    auto=add
 EOF
 
   rm -rf /etc/strongswan/strongswan.conf
@@ -1021,6 +983,7 @@ EOF
 charon {
       load_modular = yes
       duplicheck.enable = no
+      install_virtual_ip = yes
       compress = yes
       plugins {
               include strongswan.d/charon/*.conf
@@ -1070,7 +1033,6 @@ EOF
   firewall-cmd --permanent --add-port=500/tcp
   firewall-cmd --permanent --add-port=500/udp
   firewall-cmd --permanent --add-port=1723/tcp
-  firewall-cmd --permanent --add-port=500/udp
   firewall-cmd --permanent --add-port=4500/udp
   firewall-cmd --permanent --add-port=1701/udp
   firewall-cmd --permanent --add-masquerade
@@ -1657,12 +1619,12 @@ EOF
 
 		# Download install file
 		if [[ ! -f "linuxamd64_12102_database_1of2.zip" ]]; then
-			wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_1of2.zip
-			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linuxamd64_12102_database_1of2.zip
+			#wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_1of2.zip
+			wget -N http://xieguoliang.com/downloads/linuxamd64_12102_database_1of2.zip
 		fi
 		if [[ ! -f "linuxamd64_12102_database_2of2.zip" ]]; then
-			wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_2of2.zip
-			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linuxamd64_12102_database_2of2.zip
+			#wget -N http://192.168.1.168/Tools/Database/Oracle/linuxamd64_12102_database_2of2.zip
+			wget -N http://xieguoliang.com/downloads/linuxamd64_12102_database_2of2.zip
 		fi
 
 		rm -rf /stage;
@@ -1976,12 +1938,12 @@ EOF
 
 		# Download install file
 		if [[ ! -f "linux.x64_11gR2_database_1of2.zip" ]]; then
-			wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_1of2.zip
-			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linux.x64_11gR2_database_1of2.zip
+			#wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_1of2.zip
+			wget -N http://xieguoliang.com/downloads/linux.x64_11gR2_database_1of2.zip
 		fi
 		if [[ ! -f "linux.x64_11gR2_database_2of2.zip" ]]; then
-			wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_2of2.zip
-			#wget -N http://home.guoliang.info/Tools/Database/Oracle/linux.x64_11gR2_database_2of2.zip
+			#wget -N http://192.168.1.168/Tools/Database/Oracle/linux.x64_11gR2_database_2of2.zip
+			wget -N http://xieguoliang.com/downloads/linux.x64_11gR2_database_2of2.zip
 		fi
 
 		rm -rf /stage;
@@ -2568,7 +2530,7 @@ function install_weblogic12()
 
 		# 下载解压文件
 		if [[ ! -f "fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip" ]]; then
-			wget -c http://home.guoliang.info/Tools/Network/Server/fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip;
+			wget -c http://xieguoliang.com/downloads/fmw_12.2.1.2.0_wls_quick_Disk1_1of1.zip;
 		fi
 
 		rm -rf /stage;
