@@ -125,6 +125,7 @@ ssh_port='1036'
 
 # 域名
 host_name=""
+site_dir=""
 
 # Tomcat
 http_proxy_tomcat=1
@@ -341,8 +342,9 @@ function install()
 
 	install_mysql;
 
-	#install_vpn;
-  install_strongswan;
+	install_vpn;
+
+  #install_strongswan;
 
 	install_ftp;
 
@@ -771,14 +773,22 @@ EOF
 		systemctl enable pptpd.service ipsec.service xl2tpd.service;
 		systemctl restart pptpd.service ipsec.service xl2tpd.service;
 
+    install_strongswan 1;
+
 		echo "VPN install finish."
 
 		o_vpn_state=2;
 	fi
+  install_freeradius
+}
+
+function install_freeradius() {
+  install_mysql 1
+  yum -y install freeradius freeradius-mysql freeradius-utils
+
 }
 
 function install_strongswan() {
-
   # 参考
   # https://www.kiritostudio.com/running-a-strongswan-server-with-radius-on-your-vps/
   # http://cache.baiducontent.com/c?m=9f65cb4a8c8507ed4fece763105392230e54f73260878e482a958448e435061e5a3cb0e76c7944538f9061251cab4a5ae0f63d70200357eddd97d65e98e6d27e20c961742d40d35613a358ea981a32c151c41abef80ee6cab061c5f59592&p=907d890f86cc42af53f5c7710f4983&newp=8b2a975b978415c308e2977e060590231610db2151d4d11e6b82c825d7331b001c3bbfb42323140ed6cf796201ae4d57e9f63d7136032ba3dda5c91d9fb4c574799666732470&user=baidu&fm=sc&query=strongswan+freeradius&qid=f9f9019900012e99&p1=6
@@ -788,120 +798,125 @@ function install_strongswan() {
   # http://zlyang.blog.51cto.com/1196234/1881225/
   # https://blog.itnmg.net/centos7-ipsec-vpn/
   # https://wbuntu.com/?p=323
+  # http://maskray.me/blog/2015-12-31-strongswan
 
-  yum install pam-devel openssl-devel make gcc curl tcpdump -y
-  dir=$(pwd);
-  rm -rf strongswan
-  mkdir strongswan
-  curl -sS "http://xieguoliang.com/downloads/strongswan-5.5.1.tar.gz" | tar -zvxC strongswan --strip-components 1
-  cd strongswan
-  ./configure --prefix=/usr --sysconfdir=/etc/strongswan \
-    --enable-eap-identity \
-    --enable-eap-md5 \
-    --enable-eap-mschapv2 \
-    --enable-eap-tls \
-    --enable-eap-ttls \
-    --enable-eap-peap \
-    --enable-eap-tnc \
-    --enable-eap-dynamic \
-    --enable-eap-radius \
-    --enable-xauth-eap  \
-    --enable-xauth-pam  \
-    --enable-dhcp \
-    --enable-openssl \
-    --enable-addrblock \
-    --enable-unity \
-    --enable-certexpire \
-    --enable-radattr \
-    --enable-swanctl \
-    --enable-openssl \
-    --disable-gmp
+  if [[ $o_vpn_state -eq 1 || $1 -eq 1 ]] && [[ $(service_test "strongswan") -eq 0 ]]; then
+    yum install pam-devel openssl-devel make gcc curl tcpdump -y
+    dir=$(pwd);
+    rm -rf strongswan
+    mkdir strongswan
+    curl -sS "http://xieguoliang.com/downloads/strongswan-5.5.1.tar.gz" | tar -zvxC strongswan --strip-components 1
+    cd strongswan
+    ./configure --prefix=/usr --sysconfdir=/etc/strongswan \
+      --enable-eap-identity \
+      --enable-eap-md5 \
+      --enable-eap-mschapv2 \
+      --enable-eap-tls \
+      --enable-eap-ttls \
+      --enable-eap-peap \
+      --enable-eap-tnc \
+      --enable-eap-dynamic \
+      --enable-eap-radius \
+      --enable-xauth-eap  \
+      --enable-xauth-pam  \
+      --enable-dhcp \
+      --enable-openssl \
+      --enable-addrblock \
+      --enable-unity \
+      --enable-certexpire \
+      --enable-radattr \
+      --enable-swanctl \
+      --enable-openssl \
+      --disable-gmp
 
-  make && make install
+    make && make install
 
-  cd $dir;
+    cd $dir;
 
-  input_host_name;
-  CN="$host_name";
-  if [[ -z "$CN" ]]; then
-    CN="$serverip";
-  fi
+    input_host_name;
 
-  # 生成证书
-  # 1. 生成一个私钥：
-  ipsec pki --gen --type rsa --size 4096 --outform pem > ca.pem
+    install_httpd 1;
 
-  # 2. 基于这个私钥自己签一个 CA 根证书
-  # –self 表示自签证书
-  #  –in 是输入的私钥
-  # –dn 是判别名
+    CN="$host_name";
+    if [[ -z "$CN" ]]; then
+      CN="$serverip";
+    fi
 
-  #   C 表示国家名，同样还有 ST 州/省名，L 地区名，STREET（全大写） 街道名
-  #   O 组织名称
-  #   CN 友好显示的通用名
-  # –ca 表示生成 CA 根证书
-  # –lifetime 为有效期, 单位是天
-  ipsec pki --self --in ca.pem --dn "C=CN, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem >ca.cert.pem
+    # 生成证书
+    # 1. 生成一个私钥：
+    ipsec pki --gen --type rsa --size 4096 --outform pem > ca.pem
 
-  # 生成服务器端证书
-  # 1. 同样先生成一个私钥
-  ipsec pki --gen --type rsa --size 2048 --outform pem > server.pem
+    # 2. 基于这个私钥自己签一个 CA 根证书
+    # –self 表示自签证书
+    #  –in 是输入的私钥
+    # –dn 是判别名
 
-  # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
-  # 从私钥生成公钥
-  ipsec pki --pub --in server.pem --type rsa --outform pem > server.pub.pem
+    #   C 表示国家名，同样还有 ST 州/省名，L 地区名，STREET（全大写） 街道名
+    #   O 组织名称
+    #   CN 友好显示的通用名
+    # –ca 表示生成 CA 根证书
+    # –lifetime 为有效期, 单位是天
+    ipsec pki --self --in ca.pem --dn "C=CN, O=GuoLiang, CN=$CN" --ca --lifetime 3650 --outform pem >ca.cert.pem
 
-  # 用刚生成的公钥生成服务器证书
-  # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
-  # –dn, –san，–flag 是一些客户端方面的特殊要求：
+    # 生成服务器端证书
+    # 1. 同样先生成一个私钥
+    ipsec pki --gen --type rsa --size 2048 --outform pem > server.pem
 
-  # iOS 客户端要求 CN 也就是通用名必须是你的服务器的 URL 或 IP 地址;
-  # Windows 7 不但要求了上面，还要求必须显式说明这个服务器证书的用途（用于与服务器进行认证），–flag serverAuth;
-  # 非 iOS 的 Mac OS X 要求了“IP 安全网络密钥互换居间（IP Security IKE Intermediate）”这种增强型密钥用法（EKU），–flag ikdeIntermediate;
-  # Android 和 iOS 都要求服务器别名（serverAltName）就是服务器的 URL 或 IP 地址，–san。
-  ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=$CN" --san="$CN" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
+    # 2. 用我们刚才自签的 CA 证书给自己发一个服务器证书：
+    # 从私钥生成公钥
+    ipsec pki --pub --in server.pem --type rsa --outform pem > server.pub.pem
 
-  # 生成客户端证书(可选)
+    # 用刚生成的公钥生成服务器证书
+    # –issue, –cacert 和 –cakey 就是表明要用刚才自签的 CA 证书来签这个服务器证书。
+    # –dn, –san，–flag 是一些客户端方面的特殊要求：
 
-  # 客户端证书是在启用客户端证书验证的时候, 用于验证客户端用户身份的. 每个用户一个证书. 如果需要很高的安全性, 可以用客户端证书, 一般情况下, 不需要使用.
-  # 1. 依然是生成私钥：
-  ipsec pki --gen --type rsa --size 2048 --outform pem > client.pem
+    # iOS 客户端要求 CN 也就是通用名必须是你的服务器的 URL 或 IP 地址;
+    # Windows 7 不但要求了上面，还要求必须显式说明这个服务器证书的用途（用于与服务器进行认证），–flag serverAuth;
+    # 非 iOS 的 Mac OS X 要求了“IP 安全网络密钥互换居间（IP Security IKE Intermediate）”这种增强型密钥用法（EKU），–flag ikdeIntermediate;
+    # Android 和 iOS 都要求服务器别名（serverAltName）就是服务器的 URL 或 IP 地址，–san。
+    ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem --in server.pub.pem --dn "C=CN, O=GuoLiang, CN=$CN" --san="$CN" --flag serverAuth --flag ikeIntermediate --outform pem > server.cert.pem
 
-  # 2. 然后用刚才自签的 CA 证书来签客户端证书：
-  # 从私钥生成公钥
-  ipsec pki --pub --in client.pem --type rsa --outform pem > client.pub.pem
+    # 生成客户端证书(可选)
 
-  # 这里就不需要上面那一堆特殊参数了
+    # 客户端证书是在启用客户端证书验证的时候, 用于验证客户端用户身份的. 每个用户一个证书. 如果需要很高的安全性, 可以用客户端证书, 一般情况下, 不需要使用.
+    # 1. 依然是生成私钥：
+    ipsec pki --gen --type rsa --size 2048 --outform pem > client.pem
 
-  ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem  --in client.pub.pem --dn "C=cn, O=GuoLiang, CN=$CN" --outform pem > client.cert.pem
-  # 打包证书为 pkcs12
-  # 此时会提示输入两次密码, 这个密码是在导入证书到其他系统时需要验证的. 没有这个密码即使别人拿到了证书也没法使用.
+    # 2. 然后用刚才自签的 CA 证书来签客户端证书：
+    # 从私钥生成公钥
+    ipsec pki --pub --in client.pem --type rsa --outform pem > client.pub.pem
 
-  EXPORT_P12=$(expect -c "
-    set timeout -1
-    spawn openssl pkcs12 -export -inkey client.pem -in client.cert.pem -name \"VPN Client Cert\" -certfile ca.cert.pem -caname \"$CN VPN CA\" -out client.cert.p12
-    expect \"Enter Export Password:\"
-    send \"$vpn_cert_password\r\"
+    # 这里就不需要上面那一堆特殊参数了
 
-    expect \"Enter Export Password:\"
-    send \"$vpn_cert_password\r\"
+    ipsec pki --issue --lifetime 3600 --cacert ca.cert.pem --cakey ca.pem  --in client.pub.pem --dn "C=cn, O=GuoLiang, CN=$CN" --outform pem > client.cert.pem
+    # 打包证书为 pkcs12
+    # 此时会提示输入两次密码, 这个密码是在导入证书到其他系统时需要验证的. 没有这个密码即使别人拿到了证书也没法使用.
 
-    expect eof
-  ");
+    EXPORT_P12=$(expect -c "
+      set timeout -1
+      spawn openssl pkcs12 -export -inkey client.pem -in client.cert.pem -name \"VPN Client Cert\" -certfile ca.cert.pem -caname \"$CN VPN CA\" -out client.cert.p12
+      expect \"Enter Export Password:\"
+      send \"$vpn_cert_password\r\"
 
-  echo "$EXPORT_P12"
+      expect \"Enter Export Password:\"
+      send \"$vpn_cert_password\r\"
 
-  cp -r ca.pem /etc/strongswan/ipsec.d/private/
-  cp -r server.pem /etc/strongswan/ipsec.d/private/
-  cp -r client.pem /etc/strongswan/ipsec.d/private/
+      expect eof
+    ");
 
-  cp -r ca.cert.pem /etc/strongswan/ipsec.d/cacerts/
-  cp -r server.cert.pem /etc/strongswan/ipsec.d/certs/
-  cp -r server.pub.pem /etc/strongswan/ipsec.d/certs/
-  cp -r client.cert.pem /etc/strongswan/ipsec.d/certs/
+    echo "$EXPORT_P12"
 
-  rm -rf /etc/strongswan/ipsec.conf;
-  cat >>/etc/strongswan/ipsec.conf<<EOF
+    cp -r ca.pem /etc/strongswan/ipsec.d/private/
+    cp -r server.pem /etc/strongswan/ipsec.d/private/
+    cp -r client.pem /etc/strongswan/ipsec.d/private/
+
+    cp -r ca.cert.pem /etc/strongswan/ipsec.d/cacerts/
+    cp -r server.cert.pem /etc/strongswan/ipsec.d/certs/
+    cp -r server.pub.pem /etc/strongswan/ipsec.d/certs/
+    cp -r client.cert.pem /etc/strongswan/ipsec.d/certs/
+
+    rm -rf /etc/strongswan/ipsec.conf;
+    cat >>/etc/strongswan/ipsec.conf<<EOF
 config setup
     uniqueids=never
     charondebug="cfg 2, dmn 2, ike 2, net 0"
@@ -949,10 +964,11 @@ conn ios_ikev2
     esp=aes256-sha256,3des-sha1,aes256-sha1!
     rekey=no
     left=%defaultroute
-    leftid=$CN
+    leftid=@$CN
     leftsendcert=always
     leftsubnet=0.0.0.0/0
     leftcert=server.cert.pem
+    leftfirewall=yes
     right=%any
     rightauth=eap-mschapv2
     rightsourceip=$iprange.0/24
@@ -978,8 +994,8 @@ conn windows7
     auto=add
 EOF
 
-  rm -rf /etc/strongswan/strongswan.conf
-  cat >>/etc/strongswan/strongswan.conf<<EOF
+    rm -rf /etc/strongswan/strongswan.conf
+    cat >>/etc/strongswan/strongswan.conf<<EOF
 charon {
       load_modular = yes
       duplicheck.enable = no
@@ -996,69 +1012,182 @@ charon {
 include strongswan.d/*.conf
 EOF
 
-  rm -rf /etc/strongswan/ipsec.secrets
-  cat>>/etc/strongswan/ipsec.secrets<<EOF
+    rm -rf /etc/strongswan/ipsec.secrets
+    cat>>/etc/strongswan/ipsec.secrets<<EOF
 : RSA server.pem
 : PSK "$shared_secret"
 $vpn_username : EAP "$vpn_password"
 $vpn_username : XAUTH "$vpn_password"
 EOF
 
-  # 开启内核转发
-  sysctl -w net.ipv4.ip_forward=1
-  sysctl -w net.ipv6.conf.all.forwarding=1
+    # 生成iOS Profile
+    rm -rf $CN.mobileconfig
+    plid="org.$CN.vpn."$(uuidgen);
+    pluid=$(uuidgen)
+    vpnplid=$(uuidgen)
+    vpnpluid=$(uuidgen)
+    cat >>$CN.mobileconfig<<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>IKEv2</key>
+			<dict>
+				<key>AuthName</key>
+				<string>$vpn_username</string>
+				<key>AuthPassword</key>
+				<string>$vpn_password</string>
+				<key>AuthenticationMethod</key>
+				<string>None</string>
+				<key>ChildSecurityAssociationParameters</key>
+				<dict>
+					<key>DiffieHellmanGroup</key>
+					<integer>14</integer>
+					<key>EncryptionAlgorithm</key>
+					<string>3DES</string>
+					<key>IntegrityAlgorithm</key>
+					<string>SHA1-96</string>
+					<key>LifeTimeInMinutes</key>
+					<integer>1440</integer>
+				</dict>
+				<key>DeadPeerDetectionRate</key>
+				<string>Medium</string>
+				<key>DisableMOBIKE</key>
+				<integer>0</integer>
+				<key>DisableRedirect</key>
+				<integer>0</integer>
+				<key>EnableCertificateRevocationCheck</key>
+				<integer>0</integer>
+				<key>EnablePFS</key>
+				<integer>0</integer>
+				<key>ExtendedAuthEnabled</key>
+				<true/>
+				<key>IKESecurityAssociationParameters</key>
+				<dict>
+					<key>DiffieHellmanGroup</key>
+					<integer>14</integer>
+					<key>EncryptionAlgorithm</key>
+					<string>3DES</string>
+					<key>IntegrityAlgorithm</key>
+					<string>SHA1-96</string>
+					<key>LifeTimeInMinutes</key>
+					<integer>1440</integer>
+				</dict>
+				<key>LocalIdentifier</key>
+				<string>$vpn_username</string>
+				<key>RemoteAddress</key>
+				<string>$CN</string>
+				<key>RemoteIdentifier</key>
+				<string>$CN</string>
+				<key>UseConfigurationAttributeInternalIPSubnet</key>
+				<integer>0</integer>
+			</dict>
+			<key>IPv4</key>
+			<dict>
+				<key>OverridePrimary</key>
+				<integer>1</integer>
+			</dict>
+			<key>PayloadDescription</key>
+			<string>Configures VPN settings</string>
+			<key>PayloadDisplayName</key>
+			<string>VPN</string>
+			<key>PayloadIdentifier</key>
+			<string>com.apple.vpn.managed.$vpnplid</string>
+			<key>PayloadType</key>
+			<string>com.apple.vpn.managed</string>
+			<key>PayloadUUID</key>
+			<string>$vpnpluid</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>Proxies</key>
+			<dict>
+				<key>HTTPEnable</key>
+				<integer>0</integer>
+				<key>HTTPSEnable</key>
+				<integer>0</integer>
+			</dict>
+			<key>UserDefinedName</key>
+			<string>$CN</string>
+			<key>VPNType</key>
+			<string>IKEv2</string>
+		</dict>
+	</array>
+	<key>PayloadDisplayName</key>
+	<string>$CN VPN</string>
+	<key>PayloadIdentifier</key>
+	<string>$plid</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>$pluid</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
+EOF
 
-  sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
-  sed -i "/net.ipv6.conf.all.forwarding/d" /etc/sysctl.conf
 
-  sed -i "$ a net.ipv4.ip_forward = 1" /etc/sysctl.conf
-  sed -i "$ a net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf
-  sysctl -p
 
-  # 配置防火墙
-  #rm -rf /etc/firewalld/services/strongswan.xml
-#  cat>>/etc/firewalld/services/strongswan.xml<<EOF
-#<?xml version="1.0" encoding="utf-8"?>
-#<service>
-#  <short>Strongswan</short>
-#  <description>Strongswan VPN</description>
-#  <port protocol="udp" port="500,4500"/>
-#</service>
-#EOF
+    # 开启内核转发
+    sysctl -w net.ipv4.ip_forward=1
+    sysctl -w net.ipv6.conf.all.forwarding=1
 
-#  firewall-cmd --reload;
-#  firewall-cmd --permanen --add-service=strongswan
+    sed -i "/net.ipv4.ip_forward/d" /etc/sysctl.conf
+    sed -i "/net.ipv6.conf.all.forwarding/d" /etc/sysctl.conf
 
-  firewall-cmd --permanent --add-service="ipsec"
-  firewall-cmd --permanent --add-port=500/tcp
-  firewall-cmd --permanent --add-port=500/udp
-  firewall-cmd --permanent --add-port=1723/tcp
-  firewall-cmd --permanent --add-port=4500/udp
-  firewall-cmd --permanent --add-port=1701/udp
-  firewall-cmd --permanent --add-masquerade
-  firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
-  firewall-cmd --permanent --add-rich-rule='rule protocol value="ah" accept'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" masquerade'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="4500" protocol="udp" to-port="4500"'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1701" protocol="udp" to-port="1701"'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="tcp" to-port="500"'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="udp" to-port="500"'
-  firewall-cmd --permanen --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1723" protocol="tcp" to-port="1723"'
-  firewall-cmd --reload;
-  # 对应iptables配置
-  # 开放端口
-  # iptables -A INPUT -p udp --dport 500 -j ACCEPT
-  # iptables -A INPUT -p udp --dport 4500 -j ACCEPT
+    sed -i "$ a net.ipv4.ip_forward = 1" /etc/sysctl.conf
+    sed -i "$ a net.ipv6.conf.all.forwarding = 1" /etc/sysctl.conf
+    sysctl -p
 
-  #启用ip伪装
-  # iptables -t nat -I POSTROUTING -s 10.1.0.0/16 -o eth0 -m policy --dir out --pol ipsec -j ACCEPT
-  # iptables -t nat -A POSTROUTING -s 10.1.0.0/16 -o eth0 -j MASQUERADE
+    # 配置防火墙
+    firewall-cmd --permanent --add-service="ipsec"
+    firewall-cmd --permanent --add-port=500/tcp
+    firewall-cmd --permanent --add-port=500/udp
+    firewall-cmd --permanent --add-port=1723/tcp
+    firewall-cmd --permanent --add-port=4500/udp
+    firewall-cmd --permanent --add-port=1701/udp
+    firewall-cmd --permanent --add-masquerade
+    firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
+    firewall-cmd --permanent --add-rich-rule='rule protocol value="ah" accept'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" masquerade'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="4500" protocol="udp" to-port="4500"'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1701" protocol="udp" to-port="1701"'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="tcp" to-port="500"'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="udp" to-port="500"'
+    firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1723" protocol="tcp" to-port="1723"'
+    firewall-cmd --reload;
 
-  #添加转发
-  # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
+    # 对应iptables配置
+    # 开放端口
+    # iptables -A INPUT -p udp --dport 500 -j ACCEPT
+    # iptables -A INPUT -p udp --dport 4500 -j ACCEPT
 
-  systemctl enable strongswan
-  systemctl start strongswan
+    #启用ip伪装
+    # iptables -t nat -I POSTROUTING -s 10.1.0.0/16 -o eth0 -m policy --dir out --pol ipsec -j ACCEPT
+    # iptables -t nat -A POSTROUTING -s 10.1.0.0/16 -o eth0 -j MASQUERADE
+
+    #添加转发
+    # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
+
+    systemctl enable strongswan
+    systemctl restart strongswan
+
+    if [[ -z "$site_dir" ]]; then
+      site_dir="/var/www/html";
+  		if [[ -n "$host_name" ]]; then
+  			site_dir="/var/www/$host_name"
+      fi
+    fi
+    if [[ -d "$site_dir" ]]; then
+      cp $CN.mobileconfig $site_dir/downloads/
+      echo "You can download iOS profile from URL : http://$CN/downloads/$CN.mobileconfig"
+    fi
+  fi
 }
 
 function install_ftp()
