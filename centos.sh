@@ -342,9 +342,9 @@ function install()
 
 	install_mysql;
 
-	install_vpn;
+	#install_vpn;
 
-  #install_strongswan;
+  install_strongswan;
 
 	install_ftp;
 
@@ -773,8 +773,6 @@ EOF
 		systemctl enable pptpd.service ipsec.service xl2tpd.service;
 		systemctl restart pptpd.service ipsec.service xl2tpd.service;
 
-    install_strongswan 1;
-
 		echo "VPN install finish."
 
 		o_vpn_state=2;
@@ -832,6 +830,8 @@ function install_strongswan() {
     make && make install
 
     cd $dir;
+
+    yum install -y  ppp pptpd xl2tpd;
 
     input_host_name;
 
@@ -992,6 +992,15 @@ conn windows7
     rightsendcert=never
     eap_identity=%any
     auto=add
+
+conn L2TP-PSK
+    keyexchange=ikev1
+    authby=secret
+    leftprotoport=17/1701 #l2tp端?~O?
+    leftfirewall=no
+    rightprotoport=17/%any
+    type=transport
+    auto=add
 EOF
 
     rm -rf /etc/strongswan/strongswan.conf
@@ -1131,7 +1140,85 @@ EOF
 </plist>
 EOF
 
+		cat >>/etc/xl2tpd/xl2tpd.conf<<EOF
+;
+; This is a minimal sample xl2tpd configuration file for use
+; with L2TP over IPsec.
+;
+; The idea is to provide an L2TP daemon to which remote Windows L2TP/IPsec
+; clients connect. In this example, the internal (protected) network
+; is 192.168.1.0/24.  A special IP range within this network is reserved
+; for the remote clients: 192.168.1.128/25
+; (i.e. 192.168.1.128 ... 192.168.1.254)
+;
+; The listen-addr parameter can be used if you want to bind the L2TP daemon
+; to a specific IP address instead of to all interfaces. For instance,
+; you could bind it to the interface of the internal LAN (e.g. 192.168.1.98
+; in the example below). Yet another IP address (local ip, e.g. 192.168.1.99)
+; will be used by xl2tpd as its address on pppX interfaces.
+[global]
+; ipsec saref = yes
+listen-addr = $serverip
+auth file = /etc/ppp/chap-secrets
+port = 1701
+[lns default]
+ip range = $iprange.10-$iprange.199
+local ip = $iprange.1
+refuse chap = yes
+refuse pap = yes
+require authentication = yes
+name = L2TPVPN
+ppp debug = yes
+pppoptfile = /etc/ppp/options.xl2tpd
+length bit = yes
+EOF
 
+    #创建options.xl2tpd配置文件
+    if [ -f "/etc/ppp/options.xl2tpd" ]; then
+      yes |mv /etc/ppp/options.xl2tpd /etc/ppp/options.xl2tpd.bak
+    fi
+    cat >>/etc/ppp/options.xl2tpd<<EOF
+#require-pap
+#require-chap
+#require-mschap
+ipcp-accept-local
+ipcp-accept-remote
+require-mschap-v2
+ms-dns 8.8.8.8
+ms-dns 8.8.4.4
+asyncmap 0
+auth
+crtscts
+lock
+hide-password
+modem
+debug
+name l2tpd
+proxyarp
+lcp-echo-interval 30
+lcp-echo-failure 4
+mtu 1400
+noccp
+connect-delay 5000
+# To allow authentication against a Windows domain EXAMPLE, and require the
+# user to be in a group "VPN Users". Requires the samba-winbind package
+# require-mschap-v2
+# plugin winbind.so
+# ntlm_auth-helper '/usr/bin/ntlm_auth --helper-protocol=ntlm-server-1 --require-membership-of="EXAMPLE\VPN Users"'
+# You need to join the domain on the server, for example using samba:
+# http://rootmanager.com/ubuntu-ipsec-l2tp-windows-domain-auth/setting-up-openswan-xl2tpd-with-native-windows-clients-lucid.html
+EOF
+
+    #创建chap-secrets配置文件，即用户列表及密码
+    if [ -f "/etc/ppp/chap-secrets" ]; then
+      yes |mv /etc/ppp/chap-secrets /etc/ppp/chap-secrets.bak
+    fi
+    cat >>/etc/ppp/chap-secrets<<EOF
+# Secrets for authentication using CHAP
+# client     server     secret               IP addresses
+$vpn_username          pptpd     $vpn_password               *
+$vpn_username          l2tpd     $vpn_password               *
+EOF
 
     # 开启内核转发
     sysctl -w net.ipv4.ip_forward=1
@@ -1151,6 +1238,10 @@ EOF
     firewall-cmd --permanent --add-port=1723/tcp
     firewall-cmd --permanent --add-port=4500/udp
     firewall-cmd --permanent --add-port=1701/udp
+    firewall-cmd --permanent --add-port=1723/tcp;
+    firewall-cmd --permanent --add-service=pptpd;
+    firewall-cmd --permanent --add-service=l2tpd;
+    firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -p tcp -i ppp+ -j TCPMSS --syn --set-mss 1356;
     firewall-cmd --permanent --add-masquerade
     firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
     firewall-cmd --permanent --add-rich-rule='rule protocol value="ah" accept'
@@ -1174,8 +1265,8 @@ EOF
     #添加转发
     # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
 
-    systemctl enable strongswan
-    systemctl restart strongswan
+    systemctl enable strongswan pptpd.service xl2tpd.service;
+    systemctl restart strongswan  pptpd.service xl2tpd.service;
 
     if [[ -z "$site_dir" ]]; then
       site_dir="/var/www/html";
