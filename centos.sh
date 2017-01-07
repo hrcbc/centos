@@ -831,7 +831,7 @@ function install_strongswan() {
 
     cd $dir;
 
-    yum install -y  ppp pptpd xl2tpd;
+    yum install -y ppp pptpd xl2tpd;
 
     input_host_name;
 
@@ -996,7 +996,7 @@ conn windows7
 conn L2TP-PSK
     keyexchange=ikev1
     authby=secret
-    leftprotoport=17/1701 #l2tp端?~O?
+    leftprotoport=17/1701
     leftfirewall=no
     rightprotoport=17/%any
     type=transport
@@ -1140,6 +1140,9 @@ EOF
 </plist>
 EOF
 
+    if [ -f "/etc/xl2tpd/xl2tpd.conf" ]; then
+      yes |mv /etc/xl2tpd/xl2tpd.conf /etc/xl2tpd/xl2tpd.conf.bak
+    fi
 		cat >>/etc/xl2tpd/xl2tpd.conf<<EOF
 ;
 ; This is a minimal sample xl2tpd configuration file for use
@@ -1239,8 +1242,6 @@ EOF
     firewall-cmd --permanent --add-port=4500/udp
     firewall-cmd --permanent --add-port=1701/udp
     firewall-cmd --permanent --add-port=1723/tcp;
-    firewall-cmd --permanent --add-service=pptpd;
-    firewall-cmd --permanent --add-service=l2tpd;
     firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -p tcp -i ppp+ -j TCPMSS --syn --set-mss 1356;
     firewall-cmd --permanent --add-masquerade
     firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
@@ -1252,6 +1253,9 @@ EOF
     firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="500" protocol="udp" to-port="500"'
     firewall-cmd --permanent --add-rich-rule='rule family="ipv4" source address="'$iprange'.0/24" forward-port port="1723" protocol="tcp" to-port="1723"'
     firewall-cmd --reload;
+
+
+
 
     # 对应iptables配置
     # 开放端口
@@ -1266,6 +1270,9 @@ EOF
     # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
 
     systemctl enable strongswan pptpd.service xl2tpd.service;
+    ausearch -c 'charon' --raw | audit2allow -M my-charon
+    semodule -i my-charon.pp
+
     systemctl restart strongswan  pptpd.service xl2tpd.service;
 
     if [[ -z "$site_dir" ]]; then
