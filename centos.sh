@@ -829,13 +829,51 @@ function install_strongswan() {
 
     make && make install
 
+    systemctl enable strongswan
+
     cd $dir;
 
-    yum install -y ppp pptpd xl2tpd;
+    yum install -y libpcap-devel
+
+    rm -rf xl2tpd-1.3.8
+    wget -c "http://xieguoliang.com/downloads/xl2tpd-1.3.8.tar.gz"
+    tar xzvf xl2tpd-1.3.8.tar.gz
+    cd xl2tpd-1.3.8
+
+    make && make install
+
+    ln -s /usr/local/sbin/xl2tpd /usr/sbin/xl2tpd
+
+    rm -rf /lib/systemd/system/xl2tpd.service;
+    cat >>/lib/systemd/system/xl2tpd.service<<EOF
+[Unit]
+Description=Level 2 Tunnel Protocol Daemon (L2TP)
+Wants=network-online.target
+After=network-online.target
+After=strongswan.service
+# Some ISPs in Russia use l2tp without IPsec, so don't insist anymore
+#Wants=ipsec.service
+
+[Service]
+Type=simple
+PIDFile=/var/run/xl2tpd/xl2tpd.pid
+ExecStartPre=/sbin/modprobe -q l2tp_ppp
+ExecStart=/usr/sbin/xl2tpd -D
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+
+EOF
+
+    systemctl enable xl2tpd
+    cd $dir;
+
+    #yum install -y ppp pptpd;
 
     input_host_name;
 
-    install_httpd 1;
+    #install_httpd 1;
 
     CN="$host_name";
     if [[ -z "$CN" ]]; then
@@ -1140,6 +1178,7 @@ EOF
 </plist>
 EOF
 
+    mkdir -p /etc/xl2tpd
     if [ -f "/etc/xl2tpd/xl2tpd.conf" ]; then
       yes |mv /etc/xl2tpd/xl2tpd.conf /etc/xl2tpd/xl2tpd.conf.bak
     fi
@@ -1269,11 +1308,10 @@ EOF
     #添加转发
     # iptables -A FORWARD -s 10.1.0.0/16 -j ACCEPT
 
-    systemctl enable strongswan pptpd.service xl2tpd.service;
-    ausearch -c 'charon' --raw | audit2allow -M my-charon
-    semodule -i my-charon.pp
+    #ausearch -c 'charon' --raw | audit2allow -M my-charon
+    #semodule -i my-charon.pp
 
-    systemctl restart strongswan  pptpd.service xl2tpd.service;
+    systemctl restart strongswan xl2tpd.service;
 
     if [[ -z "$site_dir" ]]; then
       site_dir="/var/www/html";
