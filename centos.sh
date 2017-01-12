@@ -836,6 +836,7 @@ function install_strongswan() {
     yum install -y libpcap-devel
 
     rm -rf xl2tpd-1.3.8
+    mkdir xl2tpd-1.3.8
     wget -c "http://xieguoliang.com/downloads/xl2tpd-1.3.8.tar.gz"
     tar xzvf xl2tpd-1.3.8.tar.gz
     cd xl2tpd-1.3.8
@@ -866,6 +867,8 @@ WantedBy=multi-user.target
 
 EOF
 
+    mkdir /var/run/xl2tpd
+    chmod a+rwx /var/run/xl2tpd
     systemctl enable xl2tpd
     cd $dir;
 
@@ -1280,7 +1283,6 @@ EOF
     firewall-cmd --permanent --add-port=1723/tcp
     firewall-cmd --permanent --add-port=4500/udp
     firewall-cmd --permanent --add-port=1701/udp
-    firewall-cmd --permanent --add-port=1723/tcp;
     firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -p tcp -i ppp+ -j TCPMSS --syn --set-mss 1356;
     firewall-cmd --permanent --add-masquerade
     firewall-cmd --permanent --add-rich-rule='rule protocol value="esp" accept'
