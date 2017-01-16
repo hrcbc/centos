@@ -47,13 +47,13 @@ function service_test()
 }
 
 # 命令检测
-function command_test()
-{
-	if [[ $($1 2>&1 | grep "command not found" | wc -l) -eq 1 ]]; then
-		echo "0"
-	else
-		echo "1"
-	fi
+function command_test() {
+  command="$1";
+  $s=$(command -v brew1 >/dev/null 2>&1 || { echo >&2 "0"; });
+  if [[ -z "$s" ]]; then
+    s="1"
+  fi
+  echo "$s"
 }
 
 
