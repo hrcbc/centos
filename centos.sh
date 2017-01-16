@@ -49,13 +49,13 @@ function service_test()
 # 命令检测
 function command_test() {
   command="$1";
-  $s=$(command -v brew1 >/dev/null 2>&1 || { echo >&2 "0"; });
+  s=$(command -v $command >/dev/null 2>&1 || { echo "0"; });
   if [[ -z "$s" ]]; then
-    s="1"
+    echo "1"
+  else
+    echo "$s"
   fi
-  echo "$s"
 }
-
 
 # 安装系统必备
 
