@@ -3174,6 +3174,7 @@ function install_gitlab()
 			sed -i "s/^[[:space:]]*listen[[:space:]]*80;/       listen       $gitlab_port;/"  /opt/gitlab/embedded/conf/nginx.conf
 			sed -i "s/^external_url 'http:\/\/localhost'/external_url 'http:\/\/localhost:$gitlab_port'/"  /etc/gitlab/gitlab.rb
 			sed -i "s/^[[:space:]]*port:[[:space:]]*80;/    port       $gitlab_port;/"  /opt/gitlab/embedded/service/gitlab-rails/config/gitlab.yml
+      #unicorn['port'] = 9090
 			# 添加防火墙
 			firewall-cmd --permanent --zone=public --add-port=$gitlab_port/tcp;
 			firewall-cmd --reload;
