@@ -1595,7 +1595,7 @@ EOF
 		# 创建版本库
 		mkdir -p /var/svn;
 
-		rm -rf create /var/svn/repos;
+		rm -rf /var/svn/repos;
 
 		svnadmin create /var/svn/repos;
 
@@ -1604,7 +1604,7 @@ EOF
 $svn_username=rw
 EOF
 
-		chown -R apache.apache /var/svn/repos;
+		chown -R apache:apache /var/svn/repos;
 
 		semanage fcontext -a -t public_content_rw_t "/var/svn/repos(/.*)?";
 		restorecon -R -v /var/svn/repos;
