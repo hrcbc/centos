@@ -1580,6 +1580,7 @@ DBDMax 20
 DBDExptime 200
 
 <Location /svn_repos>
+  ProxyPass !
 	DAV svn
   	SVNPath /var/svn/repos
   	AuthzSVNAccessFile /var/svn/repos/conf/authz
@@ -3177,9 +3178,14 @@ function install_gitlab()
       #unicorn['port'] = 9090
 			# 添加防火墙
 			firewall-cmd --permanent --zone=public --add-port=$gitlab_port/tcp;
-			firewall-cmd --reload;
+
 			semanage port -a -t http_port_t -p tcp $gitlab_port;
 		fi
+
+    sed -i "s/^# unicorn\['port'\] = 8080/unicorn\['port'\] = 8090/" /etc/gitlab/gitlab.rb
+    firewall-cmd --permanent --zone=public --add-port=8090/tcp;
+    semanage port -a -t http_port_t -p tcp 8090;
+    firewall-cmd --reload;
 
 
 		gitlab-ctl reconfigure;
