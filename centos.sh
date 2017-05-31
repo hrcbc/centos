@@ -206,7 +206,7 @@ do
 			shift 2;;
 
 		--oracle-sid)
-			oracle-sid="$2";
+			oracle_sid="$2";
 			shift 2;;
 
 		--gitlab-port)
