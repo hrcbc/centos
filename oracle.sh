@@ -73,13 +73,14 @@ function setup() {
 function create_user() {
   su - oracle -c '
 sqlplus / as sysdba <<EOF
-CREATE TABLESPACE piaoguanjia3 datafile "'$oracle_base'/oradata/'$oracle_sid'/'$oracle_username'.dbf" size 10000m;
-CREATE USER piaoguanjia3 IDENTIFIED BY "'$oracle_username'" DEFAULT TABLESPACE '$oracle_username' TEMPORARY TABLESPACE "TEMP";
+CREATE TABLESPACE '$oracle_username' datafile "'$oracle_base'/oradata/'$oracle_sid'/'$oracle_username'.dbf" size 10000m;
+CREATE USER '$oracle_username' IDENTIFIED BY "'$oracle_username'" DEFAULT TABLESPACE '$oracle_username' TEMPORARY TABLESPACE "TEMP";
 GRANT connect,RESOURCE TO '$oracle_username';
 GRANT connect,RESOURCE,IMP_FULL_DATABASE,DEBUG CONNECT SESSION,DEBUG ANY PROCEDURE TO '$oracle_username';
 GRANT IMP_FULL_DATABASE to '$oracle_username';
 GRANT DEBUG CONNECT SESSION to '$oracle_username';
 GRANT DEBUG ANY PROCEDURE TO '$oracle_username';
+
 EOF
 '
 }
